@@ -83,19 +83,21 @@ def vivisualize_calibration_results(left, right, left_calibrated, right_calibrat
     # Confidence maps comparison
     conf_combined = np.hstack((conf_before, conf_after))
 
-    # Show results
-    cv2.namedWindow("Original Images with Epipolar Lines", cv2.WINDOW_NORMAL)
-    cv2.imshow("Original Images with Epipolar Lines", original_combined)
+    # Create output directory for saving images
+    output_dir = "calibration_results"
+    os.makedirs(output_dir, exist_ok=True)
 
-    cv2.namedWindow("Calibrated Images with Epipolar Lines", cv2.WINDOW_NORMAL)
-    cv2.imshow("Calibrated Images with Epipolar Lines", calibrated_combined)
+    # Save results as images
+    cv2.imwrite(os.path.join(output_dir, "original_images_epipolar_lines.png"), original_combined)
+    print(f"Saved original images with epipolar lines to: {os.path.join(output_dir, 'original_images_epipolar_lines.png')}")
 
-    cv2.namedWindow("Disparity Maps (Before/After)", cv2.WINDOW_NORMAL)
-    cv2.imshow("Disparity Maps (Before/After)", disp_combined)
+    cv2.imwrite(os.path.join(output_dir, "calibrated_images_epipolar_lines.png"), calibrated_combined)
+    print(f"Saved calibrated images with epipolar lines to: {os.path.join(output_dir, 'calibrated_images_epipolar_lines.png')}")
 
-    cv2.namedWindow("Confidence Maps (Before/After)", cv2.WINDOW_NORMAL)
-    cv2.imshow("Confidence Maps (Before/After)", conf_combined)
+    cv2.imwrite(os.path.join(output_dir, "disparity_maps_before_after.png"), disp_combined)
+    print(f"Saved disparity maps comparison to: {os.path.join(output_dir, 'disparity_maps_before_after.png')}")
 
-    print("Press any key to close visualization windows...")
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    cv2.imwrite(os.path.join(output_dir, "confidence_maps_before_after.png"), conf_combined)
+    print(f"Saved confidence maps comparison to: {os.path.join(output_dir, 'confidence_maps_before_after.png')}")
+
+    print(f"All visualization results saved to '{output_dir}' directory")

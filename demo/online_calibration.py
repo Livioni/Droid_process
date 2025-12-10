@@ -28,7 +28,7 @@ np.random.seed(0)
 def get_args_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--calib_method', default='CEM', type=str, help='select model type: CEM,GD,KP')
-    parser.add_argument('--model_type', default='L', type=str,
+    parser.add_argument('--model_type', default='XL', type=str,
                         help='select model type: S,M,L,XL')
     parser.add_argument('--num_refine', default=3, type=int,
                         help='number of local iterative refinement')

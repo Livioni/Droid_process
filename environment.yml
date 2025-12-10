@@ -130,9 +130,9 @@ dependencies:
       - six==1.17.0
       - stack-data==0.6.3
       - sympy==1.14.0
-      - tensorrt-cu12==10.13.3.9
-      - tensorrt-cu12-bindings==10.13.3.9
-      - tensorrt-cu12-libs==10.13.3.9
+      - tensorrt-cu12==10.9.0.34
+      - tensorrt-cu12-bindings==10.9.0.34
+      - tensorrt-cu12-libs==10.9.0.34
       - threadpoolctl==3.6.0
       - torch==2.9.1
       - torchvision==0.24.1

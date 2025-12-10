@@ -68,13 +68,21 @@ def visualize_stereo_results_2d(left, right, pred_disp, pred_occ, pred_conf, vis
     pred_disp_vis = apply_colormap(pred_disp)
     pred_disp_vis_mask = valid[:,:,np.newaxis] * pred_disp_vis
     if vis:
-        cv2.namedWindow('left-right', cv2.WINDOW_NORMAL)
-        cv2.imshow('left-right', cv2.cvtColor(np.hstack((left, right)), cv2.COLOR_BGR2RGB))
+        import os
+        # Create output directory if it doesn't exist
+        output_dir = 'output'
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
-        cv2.namedWindow(f'left_disparity: min:{round(d_min)}, max:{round(d_max)}', cv2.WINDOW_NORMAL)
-        cv2.imshow(f'left_disparity: min:{round(d_min)}, max:{round(d_max)}', np.hstack((pred_disp_vis, pred_disp_vis_mask)))
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # Save left-right image pair
+        left_right_img = cv2.cvtColor(np.hstack((left, right)), cv2.COLOR_BGR2RGB)
+        cv2.imwrite(os.path.join(output_dir, 'left_right_images.png'), left_right_img)
+
+        # Save disparity visualization
+        disparity_img = np.hstack((pred_disp_vis, pred_disp_vis_mask))
+        cv2.imwrite(os.path.join(output_dir, f'disparity_min{round(d_min)}_max{round(d_max)}.png'), disparity_img)
+
+        print(f"Images saved to {output_dir}/ directory")
 
     return pred_disp_vis, pred_disp_vis_mask, valid
 

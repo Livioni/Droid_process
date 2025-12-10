@@ -20,17 +20,17 @@ np.random.seed(0)
 
 def get_args_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_type', type=str, default='S')
-    parser.add_argument('--img_width', type=int, default=800)
-    parser.add_argument('--img_height', type=int, default=1088)
-    parser.add_argument('--precision', type=str, choices=['fp16', 'tf32', 'fp32'], default='fp16')
+    parser.add_argument('--model_type', type=str, default='XL')
+    parser.add_argument('--img_width', type=int, default=704)
+    parser.add_argument('--img_height', type=int, default=1280)
+    parser.add_argument('--precision', type=str, choices=['fp16', 'tf32', 'fp32'], default='fp32')
     return parser
 
 def main(args):
     TRT_LOGGER = trt.Logger(trt.Logger.VERBOSE)
     runtime = trt.Runtime(TRT_LOGGER)
     print(trt.__version__)
-    trt_path = os.path.join(project_root, f"weights/trt_save/S2M2_{args.model_type}_{args.img_width}_{args.img_height}_{args.precision}.engine")
+    trt_path = os.path.join(project_root, f"weights/trt_model/S2M2_{args.model_type}_{args.img_width}_{args.img_height}_{args.precision}.engine")
     print(trt_path)
     with open(trt_path, 'rb') as f:
         serialized_engine = f.read()
