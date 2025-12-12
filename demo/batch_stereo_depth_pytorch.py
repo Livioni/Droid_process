@@ -33,24 +33,24 @@ def get_args_parser():
     
     # 必需参数
     parser.add_argument('--left_folder', type=str, 
-                        default='datasets/l-r_images/17368348-stereo_left',
+                        default='datasets/l-r_images/27904255-stereo_left',
                         help='左相机图像文件夹路径')
     parser.add_argument('--right_folder', type=str, 
-                        default='datasets/l-r_images/17368348-stereo_right',
+                        default='datasets/l-r_images/27904255-stereo_right',
                         help='右相机图像文件夹路径')
     
     # 标定文件参数
     parser.add_argument('--intrinsic_left', type=str, 
-                        default='datasets/Sun_Jun_11_15:52:37_2023/intrinsics/17368348_left_intrinsic.npy',
+                        default='datasets/Sun_Jun_11_15:52:37_2023/intrinsics/27904255_left_intrinsic.npy',
                         help='左相机内参npy文件路径')
     parser.add_argument('--intrinsic_right', type=str, 
-                        default='datasets/Sun_Jun_11_15:52:37_2023/intrinsics/17368348_right_intrinsic.npy',
+                        default='datasets/Sun_Jun_11_15:52:37_2023/intrinsics/27904255_right_intrinsic.npy',
                         help='右相机内参npy文件路径')
     parser.add_argument('--extrinsic_left', type=str, 
-                        default='datasets/Sun_Jun_11_15:52:37_2023/extrinsics/wrist_left_extrinsics_3x4.npy',
+                        default='datasets/Sun_Jun_11_15:52:37_2023/extrinsics/ext2_left_extrinsics_3x4.npy',
                         help='左相机外参npy文件路径（每一帧的外参，第一维为帧索引）')
     parser.add_argument('--extrinsic_right', type=str, 
-                        default='datasets/Sun_Jun_11_15:52:37_2023/extrinsics/wrist_right_extrinsics_3x4.npy',
+                        default='datasets/Sun_Jun_11_15:52:37_2023/extrinsics/ext2_right_extrinsics_3x4.npy',
                         help='右相机外参npy文件路径（每一帧的外参，第一维为帧索引）')
     
     # 模型参数
@@ -68,7 +68,7 @@ def get_args_parser():
                         help='保存每帧的标定参数')
     
     # 处理参数
-    parser.add_argument('--confidence_threshold', type=float, default=0,
+    parser.add_argument('--confidence_threshold', type=float, default=0.1,
                         help='置信度阈值，小于此值的深度置0')
     parser.add_argument('--output_dir', type=str, default='output/batch_depth',
                         help='输出文件夹路径')
@@ -80,7 +80,7 @@ def get_args_parser():
                         help='图像文件扩展名 (png, jpg, etc.)')
 
     # 深度图存储选项
-    parser.add_argument('--depth_storage', type=str, default='npy',
+    parser.add_argument('--depth_storage', type=str, default='compressed',
                         choices=['npy', 'compressed', 'sparse', 'batch_hdf5'],
                         help='深度图存储方法: npy(原始), compressed(压缩), sparse(稀疏), batch_hdf5(批量HDF5)')
     parser.add_argument('--depth_dtype', type=str, default='float16',
