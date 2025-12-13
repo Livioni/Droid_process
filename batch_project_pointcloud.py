@@ -11,20 +11,21 @@ from pathlib import Path
 import argparse
 import time
 from tqdm import tqdm
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
 # Import functions from the main projection script
 from project_pointcloud_to_first_person import (
     load_camera_data,
     create_projected_depth_map,
     create_projected_depth_map_cuda,
-    save_depth_map,
     CUDA_AVAILABLE
 )
 
 
 def get_frame_range(cam_dir):
     """Get the range of available frames in a camera directory."""
-    image_dir = Path(cam_dir) / "images"
+    image_dir = Path(cam_dir) / "images" / "left"
     if not image_dir.exists():
         raise FileNotFoundError(f"Images directory not found: {image_dir}")
 
@@ -45,7 +46,91 @@ def get_frame_range(cam_dir):
     return min(frame_indices), max(frame_indices)
 
 
-def batch_project_pointclouds(cam1_dir, cam2_dir, output_dir, max_depth=10.0, start_frame=None, end_frame=None, use_cuda=False, cuda_device='cuda:0'):
+def create_visualization(img1, depth1, img2, depth2, depth_projected, frame_idx, output_dir, max_depth):
+    """
+    Create visualization showing all camera views and depth maps.
+
+    Args:
+        img1: Third-person camera image
+        depth1: Third-person camera depth map
+        img2: First-person camera image
+        depth2: First-person camera depth map
+        depth_projected: Projected depth map from third-person to first-person view
+        frame_idx: Frame index
+        output_dir: Output directory for visualization
+        max_depth: Maximum depth value for consistent colorbar range
+    """
+    # Create output directory for visualizations
+    vis_dir = Path(output_dir) / "visualizations"
+    vis_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set up the figure with subplots
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle(f'Frame {frame_idx}: Camera Views and Depth Maps', fontsize=16)
+
+    # Convert BGR to RGB for matplotlib
+    img1_rgb = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
+    img2_rgb = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+
+    # Common colormap for depth maps
+    cmap = cm.viridis
+    vmin, vmax = 0, 5.0  # Fixed depth range 0-5m
+
+    # Prepare depth maps (set depth <= 0 as invalid/white)
+    depth1_vis = np.copy(depth1)
+    depth1_vis[depth1_vis <= 0] = np.nan
+
+    depth_projected_vis = np.copy(depth_projected)
+    depth_projected_vis[depth_projected_vis <= 0] = np.nan
+
+    depth2_vis = np.copy(depth2)
+    depth2_vis[depth2_vis <= 0] = np.nan
+
+    # Row 1: Third-person views
+    axes[0, 0].imshow(img1_rgb)
+    axes[0, 0].set_title('Third-Person Camera Image')
+    axes[0, 0].axis('off')
+
+    im1 = axes[0, 1].imshow(depth1_vis, cmap=cmap, vmin=vmin, vmax=vmax)
+    axes[0, 1].set_title('Third-Person Depth Map')
+    axes[0, 1].axis('off')
+
+    im2 = axes[0, 2].imshow(depth_projected_vis, cmap=cmap, vmin=vmin, vmax=vmax)
+    axes[0, 2].set_title('Projected Depth (3rd→1st Person)')
+    axes[0, 2].axis('off')
+
+    # Row 2: First-person views
+    axes[1, 0].imshow(img2_rgb)
+    axes[1, 0].set_title('First-Person Camera Image')
+    axes[1, 0].axis('off')
+
+    im3 = axes[1, 1].imshow(depth2_vis, cmap=cmap, vmin=vmin, vmax=vmax)
+    axes[1, 1].set_title('First-Person Depth Map')
+    axes[1, 1].axis('off')
+
+    # Hide the last subplot
+    axes[1, 2].axis('off')
+
+    # Add colorbar for depth maps
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    cbar = fig.colorbar(im3, cax=cbar_ax)
+    cbar.set_label('Depth (meters)', rotation=270, labelpad=20)
+
+    # Adjust layout
+    plt.tight_layout(rect=[0, 0, 0.9, 0.95])
+
+    # Save the visualization
+    output_path = vis_dir / f"{frame_idx}_visualization.png"
+    plt.savefig(str(output_path), dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    return str(output_path)
+
+
+def batch_project_pointclouds(cam1_dir, cam2_dir, output_dir, max_depth=10.0, 
+                              start_frame=None, end_frame=None, use_cuda=False, 
+                              cuda_device='cuda:0', enable_visualization=False,
+                              save_depth_map=False):
     """
     Batch process all frames to project point clouds from cam1 to cam2.
 
@@ -80,21 +165,21 @@ def batch_project_pointclouds(cam1_dir, cam2_dir, output_dir, max_depth=10.0, st
     cam2_id = cam2_path.name
 
     # Load camera 2 intrinsics
-    intrinsics_path = cam2_path / "intrinsics" / f"{cam2_id}.npy"
+    intrinsics_path = cam2_path / "intrinsics" / f"{cam2_id}_left.npy"
     if not intrinsics_path.exists():
         raise FileNotFoundError(f"Camera 2 intrinsics not found: {intrinsics_path}")
     K2 = np.load(str(intrinsics_path))
 
     # Load camera 2 extrinsics (constant across frames)
     extrinsics_dir = cam2_path / "extrinsics"
-    extrinsics_files = list(extrinsics_dir.glob("*.npy"))
+    extrinsics_files = list(extrinsics_dir.glob("*_left.npy"))
     if not extrinsics_files:
         raise FileNotFoundError(f"No extrinsics found in: {extrinsics_dir}")
     extrinsics_path = extrinsics_files[0]
     ext2_all = np.load(str(extrinsics_path))
 
     # Get camera 2 image shape from first frame
-    img2_path = cam2_path / "images" / f"{start_frame}.png"
+    img2_path = cam2_path / "images"/ "left" / f"{start_frame:06d}.png"
     if not img2_path.exists():
         raise FileNotFoundError(f"Camera 2 image not found: {img2_path}")
     img2_sample = cv2.imread(str(img2_path))
@@ -110,58 +195,61 @@ def batch_project_pointclouds(cam1_dir, cam2_dir, output_dir, max_depth=10.0, st
     start_time = time.time()
 
     for frame_idx in tqdm(range(start_frame, end_frame + 1), desc="Processing frames"):
-        try:
-            # Load camera 1 data for this frame
-            cam1_depth_dir = os.path.join(cam1_dir, "depth_npy")
-            img1, depth1, K1, ext1 = load_camera_data(cam1_dir, frame_idx, cam1_depth_dir)
+        # Load camera 1 data for this frame
+        frame_idx = f"{frame_idx:06d}"
+        cam1_depth_dir = os.path.join(cam1_dir, "depth_npy")
+        img1, depth1, K1, ext1 = load_camera_data(cam1_dir, frame_idx, cam1_depth_dir)
 
-            # Get camera 2 extrinsics for this frame
-            if frame_idx >= len(ext2_all):
-                print(f"Warning: Frame {frame_idx} out of range for camera 2 extrinsics. Skipping.")
-                failed_frames += 1
-                continue
+        # Get camera 2 extrinsics for this frame
+        if int(frame_idx) >= len(ext2_all):
+            print(f"Warning: Frame {frame_idx} out of range for camera 2 extrinsics. Skipping.")
+            failed_frames += 1
+            continue
 
-            ext2 = ext2_all[frame_idx]
+        ext2 = ext2_all[int(frame_idx)]
 
-            # Load camera 2 image and depth for this frame
-            img2_path = cam2_path / "images" / f"{frame_idx}.png"
-            if not img2_path.exists():
-                print(f"Warning: Camera 2 image not found for frame {frame_idx}. Skipping.")
-                failed_frames += 1
-                continue
+        # Load camera 2 image and depth for this frame
+        img2_path = cam2_path / "images" / "left" / f"{int(frame_idx):06d}.png"
+        if not img2_path.exists():
+            print(f"Warning: Camera 2 image not found for frame {frame_idx}. Skipping.")
+            failed_frames += 1
+            continue
 
-            img2 = cv2.imread(str(img2_path))
+        img2 = cv2.imread(str(img2_path))
 
-            depth2_path = cam2_path / "depth_npy" / f"{frame_idx}.npz"
-            if not depth2_path.exists():
-                print(f"Warning: Camera 2 depth not found for frame {frame_idx}. Skipping.")
-                failed_frames += 1
-                continue
+        depth2_path = cam2_path / "depth_npy" / f"{int(frame_idx):06d}.npz"
+        if not depth2_path.exists():
+            print(f"Warning: Camera 2 depth not found for frame {frame_idx}. Skipping.")
+            failed_frames += 1
+            continue
 
-            depth2 = np.load(str(depth2_path))['depth']
+        depth2 = np.load(str(depth2_path))['depth']
 
-            # Create projected depth map
-            if use_cuda and CUDA_AVAILABLE:
-                depth_projected, valid_mask, stats = create_projected_depth_map_cuda(
-                    img1, depth1, K1, img2, depth2, K2, ext1, ext2, max_depth, cuda_device
-                )
-            else:
-                depth_projected, valid_mask, stats = create_projected_depth_map(
-                    img1, depth1, K1, img2, depth2, K2, ext1, ext2, max_depth
-                )
+        # Create projected depth map
+        if use_cuda and CUDA_AVAILABLE:
+            depth_projected, valid_mask, stats = create_projected_depth_map_cuda(
+                img1, depth1, K1, img2, depth2, K2, ext1, ext2, max_depth, cuda_device
+            )
+        else:
+            depth_projected, valid_mask, stats = create_projected_depth_map(
+                img1, depth1, K1, img2, depth2, K2, ext1, ext2, max_depth
+            )
 
-            # Save projected depth map
+        # Save projected depth map
+        if save_depth_map:
             output_filename = f"{frame_idx}.npz"
             output_file_path = output_path / output_filename
             save_depth_map(depth_projected, str(output_file_path), valid_mask)
 
-            successful_frames += 1
+        # Create visualization if enabled
+        if enable_visualization:
+            vis_path = create_visualization(
+                img1, depth1, img2, depth2, depth_projected,
+                frame_idx, output_dir, max_depth
+            )
+            print(f"Visualization saved: {vis_path}")
 
-        except Exception as e:
-            print(f"Error processing frame {frame_idx}: {e}")
-            failed_frames += 1
-            continue
-
+        successful_frames += 1
     # Summary
     total_time = time.time() - start_time
     print(f"\n{'='*60}")
@@ -170,8 +258,6 @@ def batch_project_pointclouds(cam1_dir, cam2_dir, output_dir, max_depth=10.0, st
     print(f"Total frames processed: {end_frame - start_frame + 1}")
     print(f"Successful: {successful_frames}")
     print(f"Failed: {failed_frames}")
-    print(".2f")
-    print(".2f")
     print(f"Output directory: {output_dir}")
 
 
@@ -182,12 +268,12 @@ def create_argument_parser():
     )
     parser.add_argument(
         "--cam1",
-        default="datasets/samples/23897859",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/23897859",
         help="Third-person camera directory"
     )
     parser.add_argument(
         "--cam2",
-        default="datasets/samples/17368348",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/17368348",
         help="First-person (wrist) camera directory"
     )
     parser.add_argument(
@@ -204,13 +290,13 @@ def create_argument_parser():
     parser.add_argument(
         "--start-frame",
         type=int,
-        default=None,
+        default=0,
         help="Starting frame index (optional)"
     )
     parser.add_argument(
         "--end-frame",
         type=int,
-        default=None,
+        default=301,
         help="Ending frame index (optional)"
     )
     parser.add_argument(
@@ -223,6 +309,18 @@ def create_argument_parser():
         "--cuda-device",
         default="cuda:0",
         help="CUDA device to use (default: cuda:0)"
+    )
+    parser.add_argument(
+        "--visualization",
+        action="store_true",
+        default=True,
+        help="Enable visualization of camera views and depth maps"
+    )
+    parser.add_argument(
+        "--save-depth-map",
+        action="store_true",
+        default=False,
+        help="Save projected depth map"
     )
 
     return parser
@@ -238,6 +336,7 @@ def main():
     print(f"Third-person camera: {args.cam1}")
     print(f"First-person camera: {args.cam2}")
     print(f"Output directory: {args.output_dir}")
+    print(f"Visualization: {'Enabled' if args.visualization else 'Disabled'}")
 
     # Run batch processing
     batch_project_pointclouds(
@@ -248,7 +347,9 @@ def main():
         args.start_frame,
         args.end_frame,
         args.cuda,
-        args.cuda_device
+        args.cuda_device,
+        args.visualization,
+        args.save_depth_map
     )
 
     print(f"\n{'='*80}")

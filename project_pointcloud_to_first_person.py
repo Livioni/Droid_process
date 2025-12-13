@@ -34,18 +34,20 @@ def load_camera_data(camera_dir, frame_idx, depth_dir=None):
     """Load image, depth, intrinsics, and extrinsics for a camera."""
     camera_dir = Path(camera_dir)
     camera_id = camera_dir.name
+    frame_idx = int(frame_idx)  # Ensure frame_idx is an integer
+    
 
     # Load image (use left camera for stereo)
-    image_path = camera_dir / "images" / "left" / f"{frame_idx:06d}.png"
+    image_path = camera_dir / "images" / "left" / f"{int(frame_idx):06d}.png"
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
     image = cv2.imread(str(image_path))
 
     # Load depth - use specified depth directory if provided, otherwise use default
     if depth_dir is not None:
-        depth_path = Path(depth_dir) / f"{frame_idx:06d}.npz"
+        depth_path = Path(depth_dir) / f"{int(frame_idx):06d}.npz"
     else:
-        depth_path = camera_dir / "depth_npy" / f"{frame_idx:06d}.npz"
+        depth_path = camera_dir / "depth_npy" / f"{int(frame_idx):06d}.npz"
 
     if not depth_path.exists():
         raise FileNotFoundError(f"Depth not found: {depth_path}")
@@ -57,13 +59,11 @@ def load_camera_data(camera_dir, frame_idx, depth_dir=None):
         raise FileNotFoundError(f"Intrinsics not found: {intrinsics_path}")
     intrinsics = np.load(str(intrinsics_path))
 
-    # Load extrinsics
+    # Load extrinsics (use left camera for stereo)
     extrinsics_dir = camera_dir / "extrinsics"
-    extrinsics_files = list(extrinsics_dir.glob("*.npy"))
-    if not extrinsics_files:
-        raise FileNotFoundError(f"No extrinsics found in: {extrinsics_dir}")
-
-    extrinsics_path = extrinsics_files[0]
+    extrinsics_path = extrinsics_dir / f"{camera_id}_left.npy"
+    if not extrinsics_path.exists():
+        raise FileNotFoundError(f"Extrinsics not found: {extrinsics_path}")
     extrinsics_all = np.load(str(extrinsics_path))
 
     if frame_idx >= len(extrinsics_all):
@@ -421,9 +421,6 @@ def create_projected_depth_map(img1, depth1, K1, img2, depth2, K2, ext1, ext2, m
     print("Projection statistics:")
     print(f"  Original valid pixels: {num_valid_original}")
     print(f"  Projected valid pixels: {num_valid_projected}")
-    print(".3f")
-    print(".3f")
-    print(".3f")
     print(f"  Points behind camera 2: {stats['points_behind_camera']}")
     print(f"  Points in front of camera 2: {stats['points_in_front']}")
 
@@ -455,12 +452,12 @@ def create_argument_parser():
     )
     parser.add_argument(
         "--cam1",
-        default="datasets/samples/23897859",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/23897859",
         help="Camera 1 directory (third-person view)"
     )
     parser.add_argument(
         "--cam2",
-        default="datasets/samples/17368348",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/17368348",
         help="Camera 2 directory (first-person view)"
     )
     parser.add_argument(
@@ -521,8 +518,8 @@ def create_visualization(img1, depth1, img2, depth2, depth_projected, valid_mask
 
     # Camera 1 depth
     depth1_vis = np.copy(depth1)
-    depth1_vis[depth1_vis <= 0] = np.nan
-    im1 = axes[0, 1].imshow(depth1_vis, cmap='plasma', vmin=0, vmax=10)
+    depth1_vis[depth1_vis <= 0] = np.nan  # Treat depth <= 0 as invalid (white)
+    im1 = axes[0, 1].imshow(depth1_vis, cmap='plasma', vmin=0, vmax=5)
     axes[0, 1].set_title('Camera 1 Depth\n(Original)')
     axes[0, 1].axis('off')
     plt.colorbar(im1, ax=axes[0, 1], shrink=0.8)
@@ -531,7 +528,7 @@ def create_visualization(img1, depth1, img2, depth2, depth_projected, valid_mask
     axes[0, 2].imshow(cv2.cvtColor(img1, cv2.COLOR_BGR2RGB))
     # Overlay depth information
     depth_overlay = cv2.applyColorMap(
-        ((depth1_vis / 10.0) * 255).astype(np.uint8),
+        ((depth1_vis / 5.0) * 255).astype(np.uint8),
         cv2.COLORMAP_PLASMA
     )
     depth_overlay = cv2.cvtColor(depth_overlay, cv2.COLOR_BGR2RGB)
@@ -550,15 +547,16 @@ def create_visualization(img1, depth1, img2, depth2, depth_projected, valid_mask
 
     # Camera 2 original depth
     depth2_vis = np.copy(depth2)
-    depth2_vis[depth2_vis <= 0] = np.nan
-    im2 = axes[1, 1].imshow(depth2_vis, cmap='plasma', vmin=0, vmax=10)
+    depth2_vis[depth2_vis <= 0] = np.nan  # Treat depth <= 0 as invalid (white)
+    im2 = axes[1, 1].imshow(depth2_vis, cmap='plasma', vmin=0, vmax=5)
     axes[1, 1].set_title('Camera 2 Depth\n(Ground Truth)')
     axes[1, 1].axis('off')
     plt.colorbar(im2, ax=axes[1, 1], shrink=0.8)
 
     # Projected depth from camera 1
     depth_proj_vis = np.copy(depth_projected)
-    im3 = axes[1, 2].imshow(depth_proj_vis, cmap='plasma', vmin=0, vmax=10)
+    depth_proj_vis[depth_proj_vis <= 0] = np.nan  # Treat depth <= 0 as invalid (white)
+    im3 = axes[1, 2].imshow(depth_proj_vis, cmap='plasma', vmin=0, vmax=5)
     axes[1, 2].set_title('Projected Depth\n(from Camera 1)')
     axes[1, 2].axis('off')
     plt.colorbar(im3, ax=axes[1, 2], shrink=0.8)
@@ -567,7 +565,7 @@ def create_visualization(img1, depth1, img2, depth2, depth_projected, valid_mask
     axes[1, 3].imshow(cv2.cvtColor(img2, cv2.COLOR_BGR2RGB))
     # Overlay projected depth
     depth_proj_overlay = cv2.applyColorMap(
-        ((depth_proj_vis / 10.0) * 255).astype(np.uint8),
+        ((depth_proj_vis / 5.0) * 255).astype(np.uint8),
         cv2.COLORMAP_PLASMA
     )
     depth_proj_overlay = cv2.cvtColor(depth_proj_overlay, cv2.COLOR_BGR2RGB)
@@ -910,9 +908,6 @@ def create_projected_depth_map_cuda(img1, depth1, K1, img2, depth2, K2, ext1, ex
     print("Projection statistics:")
     print(f"  Original valid pixels: {num_valid_original}")
     print(f"  Projected valid pixels: {num_valid_projected}")
-    print(".3f")
-    print(".3f")
-    print(".3f")
     print(f"  Points behind camera 2: {stats['points_behind_camera']}")
     print(f"  Points in front of camera 2: {stats['points_in_front']}")
 

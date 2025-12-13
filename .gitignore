@@ -10,6 +10,8 @@ datasets/
 log.txt
 *.npz
 *.npy
+projected_depths_wrist
+
 # Distribution / packaging
 workspace/
 build/

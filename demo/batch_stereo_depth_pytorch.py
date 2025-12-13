@@ -688,7 +688,7 @@ def process_single_camera(camera_info, args, device, model):
             left, right = read_images(left_path, right_path)
 
             # 预处理
-            # left_processed, right_processed = preprocess_images(left, right)
+            left_processed, right_processed = preprocess_images(left, right)
 
             # 转换为torch tensor
             left_torch = (torch.from_numpy(left).permute(-1, 0, 1).unsqueeze(0)).to(device)
