@@ -7,7 +7,6 @@ visualizations/
 weights/
 output/
 datasets/
-*.png
 log.txt
 *.npz
 *.npy
