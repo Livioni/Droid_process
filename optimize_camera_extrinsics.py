@@ -37,12 +37,12 @@ class ExtrinsicsOptimizer:
         # Load camera 2 intrinsics (constant across frames)
         cam2_path = Path(cam2_dir)
         cam2_id = cam2_path.name
-        intrinsics_path = cam2_path / "intrinsics" / f"{cam2_id}.npy"
+        intrinsics_path = cam2_path / "intrinsics" / f"{cam2_id}_left.npy"
         self.K2 = torch.from_numpy(np.load(str(intrinsics_path)).astype(np.float32)).to(self.device)
 
         # Load camera 2 extrinsics (will be optimized)
         extrinsics_dir = cam2_path / "extrinsics"
-        extrinsics_files = list(extrinsics_dir.glob("*.npy"))
+        extrinsics_files = list(extrinsics_dir.glob("*_left.npy"))
         self.ext2_all = np.load(str(extrinsics_files[0]))
 
         print(f"Using device: {self.device}")
@@ -333,8 +333,10 @@ class ExtrinsicsOptimizer:
 
         # Load camera 1 data (constant across frames)
         cam1_path = Path(self.cam1_dir)
+        cam2_path = Path(self.cam2_dir)
         cam1_id = cam1_path.name
-        intrinsics_path = cam1_path / "intrinsics" / f"{cam1_id}.npy"
+        cam2_id = cam2_path.name
+        intrinsics_path = cam1_path / "intrinsics" / f"{cam1_id}_left.npy"
         K1 = np.load(str(intrinsics_path))
 
         # Optimized extrinsics array
@@ -353,7 +355,7 @@ class ExtrinsicsOptimizer:
                 points_3d_cam1, _ = create_pointcloud_from_depth(depth1, K1, max_depth=10.0)
 
                 # Load camera 2 ground truth depth
-                depth2_path = Path(self.cam2_dir) / "depth_npy" / f"{frame_idx}.npz"
+                depth2_path = Path(self.cam2_dir) / "depth_npy" / f"{frame_idx:06d}.npz"
                 depth2 = np.load(str(depth2_path))['depth']
 
                 # Optimize extrinsics for this frame
@@ -390,17 +392,17 @@ def create_argument_parser():
     )
     parser.add_argument(
         "--cam1",
-        default="datasets/samples/23897859",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/23897859",
         help="Third-person camera directory"
     )
     parser.add_argument(
         "--cam2",
-        default="datasets/samples/17368348",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/17368348",
         help="First-person (wrist) camera directory"
     )
     parser.add_argument(
         "--output-dir",
-        default="datasets/samples/17368348/extrinsics_refined",
+        default="datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined",
         help="Output directory for refined extrinsics"
     )
     parser.add_argument(

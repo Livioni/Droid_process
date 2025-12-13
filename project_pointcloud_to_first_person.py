@@ -35,24 +35,24 @@ def load_camera_data(camera_dir, frame_idx, depth_dir=None):
     camera_dir = Path(camera_dir)
     camera_id = camera_dir.name
 
-    # Load image
-    image_path = camera_dir / "images" / f"{frame_idx}.png"
+    # Load image (use left camera for stereo)
+    image_path = camera_dir / "images" / "left" / f"{frame_idx:06d}.png"
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
     image = cv2.imread(str(image_path))
 
     # Load depth - use specified depth directory if provided, otherwise use default
     if depth_dir is not None:
-        depth_path = Path(depth_dir) / f"{frame_idx}.npz"
+        depth_path = Path(depth_dir) / f"{frame_idx:06d}.npz"
     else:
-        depth_path = camera_dir / "depth_npy" / f"{frame_idx}.npz"
+        depth_path = camera_dir / "depth_npy" / f"{frame_idx:06d}.npz"
 
     if not depth_path.exists():
         raise FileNotFoundError(f"Depth not found: {depth_path}")
     depth = np.load(str(depth_path))['depth']
 
-    # Load intrinsics
-    intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}.npy"
+    # Load intrinsics (use left camera for stereo)
+    intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}_left.npy"
     if not intrinsics_path.exists():
         raise FileNotFoundError(f"Intrinsics not found: {intrinsics_path}")
     intrinsics = np.load(str(intrinsics_path))

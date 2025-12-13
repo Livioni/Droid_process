@@ -12,50 +12,46 @@ from pathlib import Path
 
 
 def load_camera_data(camera_dir, frame_idx):
+    frame_idx_clone = int(frame_idx)
+    frame_idx = f"{frame_idx:06d}"
     """Load image, depth, intrinsics, and extrinsics for a camera."""
     camera_dir = Path(camera_dir)
     camera_id = camera_dir.name
     
     # Load image
-    image_path = camera_dir / "images" / f"{frame_idx}.png"
-    if not image_path.exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
-    image = cv2.imread(str(image_path))
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    try:
+        image_path = camera_dir / "images" / "left" / f"{frame_idx}.png"
+        image = cv2.imread(str(image_path))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    except:
+        image_path = camera_dir / "images" / f"{frame_idx}.png"
+        image = cv2.imread(str(image_path))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     
     # Load depth
-    depth_backprojected_path = camera_dir / "depth_backproject" / f"{frame_idx}.npz"
-    depth_path = camera_dir / "depth_npy" / f"{frame_idx}.npz"
-    if depth_backprojected_path.exists():
+    try:
+        depth_backprojected_path = camera_dir / "depth_backproject" / f"{frame_idx}.npz"
         depth = np.load(str(depth_backprojected_path))["depth"]
         print(f"Loaded backprojected depth from {depth_backprojected_path}")
-    else:
+    except:
+        depth_path = camera_dir / "depth_npy" / f"{frame_idx}.npz"
         depth = np.load(str(depth_path))["depth"]
     
     # Load intrinsics
-    intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}.npy"
+    intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}_left.npy"
     if not intrinsics_path.exists():
         raise FileNotFoundError(f"Intrinsics not found: {intrinsics_path}")
     intrinsics = np.load(str(intrinsics_path))
     
     # Load extrinsics - find the extrinsics file
-    extrinsics_refined_dir = camera_dir / "extrinsics_refined" / f"{frame_idx}.npy"
-    extrinsics_dir = camera_dir / "extrinsics"
-    if extrinsics_refined_dir.exists():
-        extrinsics_files = list(extrinsics_refined_dir.glob("*.npy"))
-        extrinsics = np.load(extrinsics_files)
-    else:
-        extrinsics_files = list(extrinsics_dir.glob("*.npy"))
-        if not extrinsics_files:
-            raise FileNotFoundError(f"No extrinsics found in: {extrinsics_dir}")
-        
-        extrinsics_path = extrinsics_files[0]  # Take the first one
-        extrinsics_all = np.load(str(extrinsics_path))
-    
-        if frame_idx >= len(extrinsics_all):
-            raise ValueError(f"Frame {frame_idx} out of range. Max frame: {len(extrinsics_all)-1}")
-        
-        extrinsics = extrinsics_all[frame_idx]  # Shape: (3, 4)
+    try:
+        extrinsics_refined_dir = camera_dir / "extrinsics_refined" / f"{frame_idx}.npy"
+        extrinsics = np.load(str(extrinsics_refined_dir))
+        print(f"Loaded refined extrinsics from {extrinsics_refined_dir}")
+    except:
+        extrinsics_dir = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
+        extrinsics = np.load(str(extrinsics_dir))[frame_idx_clone]
+        print(f"Loaded extrinsics from {extrinsics_dir}")
     
     return image, depth, intrinsics, extrinsics
 
@@ -336,9 +332,9 @@ def main():
         "--cameras",
         nargs="+",
         default=[
-            "datasets/samples/17368348",
-            "datasets/samples/23897859",
-            "datasets/samples/27904255",
+            "datasets/samples/Sun_Jun_11_15:52:37_2023/17368348",
+            "datasets/samples/Sun_Jun_11_15:52:37_2023/23897859",
+            "datasets/samples/Sun_Jun_11_15:52:37_2023/27904255",
         ],
         help="List of camera directories"
     )
