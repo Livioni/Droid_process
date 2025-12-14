@@ -8,6 +8,8 @@ import numpy as np
 import cv2
 import viser
 import argparse
+import glob
+import os
 from pathlib import Path
 
 
@@ -45,8 +47,9 @@ def load_camera_data(camera_dir, frame_idx):
     
     # Load extrinsics - find the extrinsics file
     try:
-        extrinsics_refined_dir = camera_dir / "extrinsics_refined" / f"{frame_idx}.npy"
-        extrinsics = np.load(str(extrinsics_refined_dir))
+        extrinsics_refined_dir = camera_dir / "extrinsics_refined_icp" 
+        extrinsics_file = glob.glob(os.path.join(extrinsics_refined_dir, '*.npy'))[0]
+        extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
         print(f"Loaded refined extrinsics from {extrinsics_refined_dir}")
     except:
         extrinsics_dir = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
@@ -353,7 +356,7 @@ def main():
     parser.add_argument(
         "--downsample",
         type=int,
-        default=1,
+        default=2,
         help="Downsample factor for points (default: 1, no downsampling)"
     )
     
