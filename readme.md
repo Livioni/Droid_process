@@ -1,4 +1,12 @@
 # Droid 数据处理
+
+
+
+<div align="center">
+  <img src="assets/overview.jpg" alt="overview" width="800"/>
+</div>
+
+
 ## 环境准备
 
 ```bash
@@ -94,6 +102,10 @@ datasets/samples
 - `ext1.txt` - 外部相机1
 - `ext2.txt` - 外部相机2
 
+
+<div align="center">
+  <img src="assets/droid_gif.png" alt="gif" width="800"/>
+</div>
 
 ## 使用S2M2模型获得深度图
 
