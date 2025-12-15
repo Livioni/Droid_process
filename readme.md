@@ -109,6 +109,13 @@ datasets/samples
 
 ## 使用S2M2模型获得深度图
 
+双目深度模型
+
+- [S2M2](https://github.com/junhong-3dv/s2m2) SOTA, Wrist camera OOD
+- [FoundationStereos](https://github.com/NVlabs/FoundationStereo) 比S2M2差
+- [IGEV++](https://github.com/gangweiX/IGEV-plusplus) 垃圾
+- [GGEV](https://github.com/JiaxinLiu-A/GGEV) 没开源
+- [PriorDepthAnything](https://github.com/SpatialVision/Prior-Depth-Anything) 效果差，OOD。
 
 ### 批量处理所有相机
 
