@@ -11,6 +11,7 @@ log.txt
 *.npz
 *.npy
 projected_depths_wrist
+visualizations_wrist_alignment
 
 # Distribution / packaging
 workspace/

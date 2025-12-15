@@ -321,7 +321,8 @@ class WristCameraAligner:
         
         # Visualize if requested
         if visualize:
-            self.visualize_point_clouds(source_pcd, target_pcd, T_icp, frame_idx)
+            if int(frame_idx) % 50 == 0:
+                self.visualize_point_clouds(source_pcd, target_pcd, T_icp, frame_idx)
         
         return optimized_ext_wrist, reg_result.fitness, reg_result.inlier_rmse
 
@@ -491,19 +492,19 @@ def create_argument_parser():
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=50,
+        default=80,
         help="Maximum ICP iterations per frame"
     )
     parser.add_argument(
         "--distance-threshold",
         type=float,
-        default=0.05,
+        default=0.03,
         help="Distance threshold for ICP correspondence (in meters)"
     )
     parser.add_argument(
         "--voxel-size",
         type=float,
-        default=0.001,
+        default=0.005,
         help="Voxel size for downsampling (in meters)"
     )
     parser.add_argument(
