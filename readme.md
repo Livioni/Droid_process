@@ -115,7 +115,14 @@ datasets/samples
 - [FoundationStereos](https://github.com/NVlabs/FoundationStereo) 比S2M2差
 - [IGEV++](https://github.com/gangweiX/IGEV-plusplus) 垃圾
 - [GGEV](https://github.com/JiaxinLiu-A/GGEV) 没开源
+
+
+深度补全模型
+
 - [PriorDepthAnything](https://github.com/SpatialVision/Prior-Depth-Anything) 效果差，OOD。
+- [Camera Depth Model](https://github.com/ByteDance-Seed/manip-as-in-sim-suite) 效果差
+- [Prompt Depth Anything](https://github.com/DepthAnything/PromptDA) 效果差
+
 
 ### 批量处理所有相机
 
@@ -124,9 +131,9 @@ datasets/samples
 ```bash
 # 处理所有相机
 python demo/batch_stereo_depth_pytorch.py \
-  --dataset_root datasets/samples/Sun_Jun_11_15:52:37_2023 \
+  --dataset_root high_conf/Sun_Jun_11_15:52:37_2023 \
   --model_type XL \
-  --confidence_threshold 0.2 \
+  --confidence_threshold 0.5 \
   --depth_storage compressed \
   --depth_dtype float16 \
   --save_visualization
@@ -173,6 +180,23 @@ datasets/samples/{camera_id}/depths/
 - `--torch_compile`: 使用torch.compile加速
 - `--allow_negative`: 允许负视差（用于不完美的rectification）
 
+## Camera Depth Model Refine
+
+依赖：确保已安装 `torchvision`（CDM 推理会用到）。
+
+```bash
+python cdm_infer.py \
+    --rgb-image cdm/example_data/color_12.png \
+    --depth-image cdm/example_data/depth_12.png \  # 也支持 .npz/.npy（npz 默认 key=depth）
+    --output visualization.png
+```
+
+批量处理一个场景目录（会自动遍历其下所有相机目录；输入 `images/left/*.png` + `depth_npy/*.npz`，输出到各相机的 `depth_refined/*.npy`）：
+
+```bash
+python cdm_infer.py \
+  --root-dir high_conf/Sun_Jun_11_15:52:37_2023
+```
 
 ## 初步可视化
 
@@ -310,29 +334,19 @@ python align_left_right_camera.py \
 **使用方法：**
 
 ```bash
-# 基本用法（使用原始外参）
-python align_wrist_camera.py \
-  --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
-  --cam-ext2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
-  --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
-  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp
 
 # 使用已对齐的第二个第三人称相机外参（推荐）
 python align_wrist_camera.py \
-  --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
-  --cam-ext2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
-  --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
-  --use-aligned-ext2 \
-  --aligned-ext2-path datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp/27904255.npy \
-  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp
+  --cam-ext1 high_conf/Sun_Jun_11_15:52:37_2023/23897859 \
+  --cam-ext2 high_conf/Sun_Jun_11_15:52:37_2023/27904255 \
+  --cam-wrist high_conf/Sun_Jun_11_15:52:37_2023/17368348 \
+  --output-dir high_conf/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp
 
 # 自定义参数
 python align_wrist_camera.py \
   --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
   --cam-ext2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
   --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
-  --use-aligned-ext2 \
-  --aligned-ext2-path datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp/27904255.npy \
   --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp \
   --max-iterations 50 \
   --distance-threshold 0.05 \
@@ -370,77 +384,3 @@ python align_wrist_camera.py \
 对齐后的外参文件可以替换原始外参用于后续处理。
 
 ---
-
-## 完整的相机对齐工作流程
-
-### 步骤1：对齐两个第三人称相机
-
-```bash
-python align_left_right_camera.py \
-  --cam1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
-  --cam2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
-  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp \
-  --num-frames 10
-```
-
-**输出：** `datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp/27904255.npy`
-
-### 步骤2：使用对齐后的第三人称相机对齐腕部相机
-
-```bash
-python align_wrist_camera.py \
-  --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
-  --cam-ext2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
-  --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
-  --use-aligned-ext2 \
-  --aligned-ext2-path datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp/27904255.npy \
-  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp
-```
-
-**输出：** `datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp/17368348.npy`
-
-### 步骤3：验证对齐结果
-
-使用可视化工具检查对齐效果：
-
-```bash
-# 可视化单帧
-python visualize_pointclouds.py --frame 100
-
-# 可视化时序帧
-python visualize_temporal_pointclouds.py
-```
-
-### 文件结构
-
-对齐完成后的目录结构：
-
-```
-datasets/samples/Sun_Jun_11_15:52:37_2023/
-├── 23897859/                          # 参考第三人称相机（不变）
-│   ├── extrinsics/
-│   │   └── 23897859_left.npy         # 原始外参
-│   └── ...
-├── 27904255/                          # 第二个第三人称相机
-│   ├── extrinsics/
-│   │   └── 27904255_left.npy         # 原始外参
-│   ├── extrinsics_refined_icp/
-│   │   ├── 27904255.npy              # 对齐后的外参 ✓
-│   │   └── alignment_stats.png
-│   └── ...
-└── 17368348/                          # 腕部相机
-    ├── extrinsics/
-    │   └── 17368348_left.npy         # 原始外参
-    ├── extrinsics_refined_icp/
-    │   ├── 17368348.npy              # 对齐后的外参 ✓
-    │   └── wrist_alignment_stats.png
-    └── ...
-```
-
-### 关键点
-
-1. **第三人称相机对齐**：使用前10帧的平均变换，因为这些相机是静态的
-2. **腕部相机对齐**：逐帧对齐，因为腕部相机是移动的
-3. **组合点云**：使用两个第三人称相机的组合点云提供更完整的场景覆盖
-4. **遮挡处理**：自动过滤被遮挡的点，只保留腕部相机可见的最近点
-

@@ -167,8 +167,8 @@ def get_args_parser():
 
     # 深度图存储选项
     parser.add_argument('--depth_storage', type=str, default='compressed',
-                        choices=['npy', 'compressed', 'sparse', 'batch_hdf5'],
-                        help='深度图存储方法: npy(原始), compressed(压缩), sparse(稀疏), batch_hdf5(批量HDF5)')
+                        choices=['npy', 'compressed', 'sparse', 'batch_hdf5', 'png'],
+                        help='深度图存储方法: npy(原始), compressed(压缩), sparse(稀疏), batch_hdf5(批量HDF5), png(PNG格式，单位:mm)')
     parser.add_argument('--depth_dtype', type=str, default='float16',
                         choices=['float16', 'float32', 'float64'],
                         help='深度图数据类型，float16最节省空间')
@@ -358,7 +358,7 @@ def save_disparity_visualization(disparity, output_path):
     """保存视差图可视化"""
     disp_vis = disparity.copy()
     valid_mask = disp_vis > 0
-    
+
     if np.any(valid_mask):
         min_val = np.min(disp_vis[valid_mask])
         max_val = np.max(disp_vis[valid_mask])
@@ -368,12 +368,32 @@ def save_disparity_visualization(disparity, output_path):
         disp_vis = disp_norm
     else:
         disp_vis = np.zeros_like(disp_vis, dtype=np.uint8)
-    
+
     # 应用colormap
     disp_colored = cv2.applyColorMap(disp_vis, cv2.COLORMAP_TURBO)
-    
+
     # 保存
     cv2.imwrite(output_path, disp_colored)
+
+
+def save_depth_png(depth_map, output_path):
+    """
+    保存深度图为PNG格式（16-bit，单位:mm）
+
+    Args:
+        depth_map: 深度图 [H, W]，单位为mm
+        output_path: 输出路径
+    """
+    # 确保深度图是mm单位且数据类型正确
+    depth_png = depth_map.copy()
+
+    # 将深度值转换为16-bit范围 (0-65535)
+    # 假设深度范围是0-10000mm，映射到0-65535
+    max_depth_mm = 10000.0  # 10米最大深度
+    depth_png_norm = (depth_png / max_depth_mm * 65535.0).astype(np.uint16)
+
+    # 保存为16-bit PNG
+    cv2.imwrite(output_path, depth_png_norm)
 
 
 # =============================================================================
@@ -499,6 +519,34 @@ def load_depth_sparse(input_path):
     return depth_map
 
 
+def load_depth_png(input_path):
+    """
+    从PNG文件加载深度图
+    Load depth map from PNG file
+
+    Args:
+        input_path: 输入路径
+
+    Returns:
+        depth_map: 深度图 [H, W]，单位为m
+    """
+    # 读取16-bit PNG
+    depth_png = cv2.imread(input_path, cv2.IMREAD_UNCHANGED)
+
+    if depth_png is None:
+        raise ValueError(f"无法读取PNG文件: {input_path}")
+
+    # 确保是16-bit格式
+    if depth_png.dtype != np.uint16:
+        raise ValueError(f"PNG文件不是16-bit格式: {depth_png.dtype}")
+
+    # 转换回深度值 (mm -> m)
+    max_depth_mm = 10000.0  # 10米最大深度
+    depth_map = depth_png.astype(np.float32) / 65535.0 * max_depth_mm / 1000.0  # 转换为米
+
+    return depth_map
+
+
 def load_depth_map(depth_dir, filename, storage_method='compressed'):
     """
     统一的深度图加载函数
@@ -529,6 +577,10 @@ def load_depth_map(depth_dir, filename, storage_method='compressed'):
     elif storage_method == 'batch_hdf5':
         hdf5_path = os.path.join(depth_dir, 'depth_maps.h5')
         return load_depth_from_hdf5(hdf5_path, filename)
+
+    elif storage_method == 'png':
+        depth_path = os.path.join(depth_dir, f'{base_name}_depth.png')
+        return load_depth_png(depth_path)
 
     else:
         raise ValueError(f"不支持的存储方法: {storage_method}")
@@ -673,6 +725,9 @@ def process_single_camera(camera_info, args, device, model):
     # 处理每对图像
     for frame_idx, (left_path, right_path, filename) in enumerate(tqdm(image_pairs, desc=f"相机 {camera_id}")):
         try:
+            # 文件名处理
+            base_name = os.path.splitext(filename)[0]
+
             # 计算当前帧的baseline和doffs
             baseline, doffs = compute_baseline_and_doffs_per_frame(
                 extrinsics_left[frame_idx],
@@ -712,6 +767,13 @@ def process_single_camera(camera_info, args, device, model):
 
             # 应用置信度过滤
             depth_map[pred_conf < args.confidence_threshold] = 0
+
+            # PNG格式特殊处理：在转换为米之前保存（保持mm单位）
+            if args.depth_storage == 'png':
+                depth_png_path = depth_npy_dir / f'{base_name}_depth.png'
+                save_depth_png(depth_map, str(depth_png_path))
+
+            # 转换为米单位用于其他保存格式
             depth_map /= 1000
 
             # 统计
@@ -720,8 +782,6 @@ def process_single_camera(camera_info, args, device, model):
             total_pixels += depth_map.size
 
             # 保存深度图 - 使用优化的存储方法
-            base_name = os.path.splitext(filename)[0]
-
             if args.depth_storage == 'batch_hdf5':
                 # 批量HDF5模式：收集数据，稍后批量保存
                 batch_depth_maps.append(depth_map)

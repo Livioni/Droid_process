@@ -49,6 +49,68 @@ def extract_intrinsics_from_svo(svo_path):
     return left_intrinsic_mat, right_intrinsic_mat
 
 
+def extract_raw_depth_from_svo(svo_path, raw_depth_output_dir):
+    """
+    Extract per-frame raw depth (in meters) from a ZED .svo file and save to disk.
+
+    Saved format:
+      - One .npy file per frame: {frame_idx:06d}.npy
+      - dtype: float32
+      - shape: (H, W)
+    """
+    raw_depth_output_dir = Path(raw_depth_output_dir)
+    raw_depth_output_dir.mkdir(parents=True, exist_ok=True)
+
+    init_params = sl.InitParameters()
+    init_params.set_from_svo_file(str(svo_path))
+    init_params.depth_mode = sl.DEPTH_MODE.QUALITY
+    init_params.svo_real_time_mode = False
+    init_params.coordinate_units = sl.UNIT.METER
+    init_params.depth_minimum_distance = 0.2
+
+    zed = sl.Camera()
+    err = zed.open(init_params)
+    if err != sl.ERROR_CODE.SUCCESS:
+        raise Exception(f"Error reading depth from {svo_path}: {err}")
+
+    runtime_params = sl.RuntimeParameters()
+    depth_mat = sl.Mat()
+
+    try:
+        total_frames = zed.get_svo_number_of_frames()
+    except Exception:
+        total_frames = None
+
+    frame_idx = 0
+    while True:
+        grab_err = zed.grab(runtime_params)
+        if grab_err == sl.ERROR_CODE.END_OF_SVOFILE_REACHED:
+            break
+        if grab_err != sl.ERROR_CODE.SUCCESS:
+            print(f"Warning: grab() failed at frame {frame_idx}: {grab_err}")
+            continue
+
+        zed.retrieve_measure(depth_mat, sl.MEASURE.DEPTH)
+        depth_np = depth_mat.get_data()
+
+        # ZED SDK sometimes returns (H, W, 1). Normalize to (H, W).
+        if depth_np.ndim == 3 and depth_np.shape[2] == 1:
+            depth_np = depth_np[:, :, 0]
+
+        depth_np = depth_np.astype(np.float32, copy=False)
+        np.save(raw_depth_output_dir / f"{frame_idx:06d}.npy", depth_np)
+
+        frame_idx += 1
+        if frame_idx % 100 == 0:
+            if total_frames is not None:
+                print(f"  Saved raw depth {frame_idx}/{total_frames} frames...")
+            else:
+                print(f"  Saved raw depth {frame_idx} frames...")
+
+    zed.close()
+    print(f"Done! Saved {frame_idx} raw depth frames to {raw_depth_output_dir}")
+
+
 def extract_stereo_frames(video_path, left_output_dir, right_output_dir):
     """
     Extract left and right frames from a stereo video (side-by-side format).
@@ -192,11 +254,13 @@ def process_camera_data(input_dir, output_dir):
         images_dir = camera_output_dir / "images"
         left_images_dir = images_dir / "left"
         right_images_dir = images_dir / "right"
+        raw_depth_dir = camera_output_dir / "raw_depth"
         intrinsics_dir = camera_output_dir / "intrinsics"
         extrinsics_dir = camera_output_dir / "extrinsics"
 
         left_images_dir.mkdir(parents=True, exist_ok=True)
         right_images_dir.mkdir(parents=True, exist_ok=True)
+        raw_depth_dir.mkdir(parents=True, exist_ok=True)
         intrinsics_dir.mkdir(parents=True, exist_ok=True)
         extrinsics_dir.mkdir(parents=True, exist_ok=True)
 
@@ -236,6 +300,12 @@ def process_camera_data(input_dir, output_dir):
 
             except Exception as e:
                 print(f"Error extracting intrinsics from {svo_file.name}: {e}")
+
+            print(f"Extracting raw depth from {svo_file.name}...")
+            try:
+                extract_raw_depth_from_svo(svo_file, raw_depth_dir)
+            except Exception as e:
+                print(f"Error extracting raw depth from {svo_file.name}: {e}")
         else:
             print(f"SVO file not found: {svo_file}")
 
