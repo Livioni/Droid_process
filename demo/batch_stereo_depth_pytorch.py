@@ -768,6 +768,10 @@ def process_single_camera(camera_info, args, device, model):
             # 应用置信度过滤
             depth_map[pred_conf < args.confidence_threshold] = 0
 
+            # 限制最大深度到 10m：超过则置为 0（depth_map 当前单位为 mm）
+            max_depth_mm = 10_000.0
+            depth_map[depth_map > max_depth_mm] = 0
+
             # PNG格式特殊处理：在转换为米之前保存（保持mm单位）
             if args.depth_storage == 'png':
                 depth_png_path = depth_npy_dir / f'{base_name}_depth.png'
