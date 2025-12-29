@@ -335,9 +335,9 @@ def main():
         "--cameras",
         nargs="+",
         default=[
-            "datasets/samples/Sun_Jun_11_15:52:37_2023/17368348",
-            "datasets/samples/Sun_Jun_11_15:52:37_2023/23897859",
-            "datasets/samples/Sun_Jun_11_15:52:37_2023/27904255",
+            "datasets/samples/Fri_Jul__7_09:42:23_2023/18026681",
+            "datasets/samples/Fri_Jul__7_09:42:23_2023/22008760",
+            "datasets/samples/Fri_Jul__7_09:42:23_2023/24400334",
         ],
         help="List of camera directories"
     )

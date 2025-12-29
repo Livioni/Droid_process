@@ -12,6 +12,7 @@ log.txt
 *.npy
 projected_depths_wrist
 visualizations_wrist_alignment
+visualizations_alignment
 hight_conf/
 
 # Distribution / packaging

@@ -47,7 +47,7 @@ def load_camera_data(camera_dir, frame_idx):
 
     # Load extrinsics - find the extrinsics file
     try:
-        extrinsics_refined_dir = camera_dir / "extrinsics_refined_icp" 
+        extrinsics_refined_dir = camera_dir / "extrinsics_refined" 
         extrinsics_file = glob.glob(os.path.join(extrinsics_refined_dir, '*.npy'))[0]
         extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
         print(f"Loaded refined extrinsics from {extrinsics_refined_dir}")
@@ -377,13 +377,13 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize temporal point clouds for a single camera")
     parser.add_argument(
         "--camera",
-        default="datasets/samples/Sun_Jun_11_15:52:37_2023/17368348",
+        default="datasets/samples/Fri_Jul__7_09:42:23_2023/18026681",
         help="Camera directory path"
     )
     parser.add_argument(
         "--center-frame",
         type=int,
-        default=100,
+        default=5,
         help="Center frame index (will show frames center-2 to center+2)"
     )
     parser.add_argument(

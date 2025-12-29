@@ -131,9 +131,9 @@ datasets/samples
 ```bash
 # 处理所有相机
 python demo/batch_stereo_depth_pytorch.py \
-  --dataset_root high_conf/Sun_Jun_11_15:52:37_2023 \
+  --dataset_root datasets/samples/Fri_Jul__7_09:42:23_2023 \
   --model_type XL \
-  --confidence_threshold 0.5 \
+  --confidence_threshold 0.9 \
   --depth_storage compressed \
   --depth_dtype float16 \
   --save_visualization
@@ -204,7 +204,7 @@ python cdm_infer.py \
 使用visualize_pointclouds.py初步可视化该场景是否有问题。
 
 ```bash
-#修改    
+#修改默认相机列表（根据你的数据目录调整）
 '''
 parser.add_argument(
         "--cameras",
@@ -241,6 +241,20 @@ python visualize_temporal_pointclouds.py
 
 **算法流程：**
 
+0. **使用MapAnything 初始化左右相机姿态：**
+  有些场景左右相机标定太不准了，用`demo/mapanything_multimodal_extrinsics.py` 初始化相机相对姿态。
+
+  ```bash
+  python demo/mapanything_multimodal_extrinsics.py \
+    --ref_cam datasets/samples/Fri_Jul__7_09:42:23_2023/22008760 \
+    --tgt_cam datasets/samples/Fri_Jul__7_09:42:23_2023/24400334 \
+    --frame 0 \
+    --output_dir datasets/samples/Fri_Jul__7_09:42:23_2023/24400334/extrinsics_refined \
+    --output_name 24400334_ma.npy
+  ```
+
+  该脚本使用MapAnything多模态推理来估计两个视图之间的相对相机姿态，特别适用于左右相机标定不准的场景。
+
 1. **多帧对齐：**
    - 对前N帧（默认10帧）分别进行ICP对齐
    - 从两个相机的深度图创建3D点云
@@ -260,23 +274,33 @@ python visualize_temporal_pointclouds.py
 **使用方法：**
 
 ```bash
-# 基本用法
+# 基本用法（推荐使用robust方法）
 python align_left_right_camera.py \
-  --cam1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
-  --cam2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
-  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp \
+  --cam1 datasets/samples/Fri_Jul__7_09:42:23_2023/22008760 \
+  --cam2 datasets/samples/Fri_Jul__7_09:42:23_2023/24400334 \
+  --output-dir datasets/samples/Fri_Jul__7_09:42:23_2023/24400334/extrinsics_refined \
   --num-frames 10
 
-# 自定义参数
+# 高级用法：使用多尺度ICP
 python align_left_right_camera.py \
   --cam1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
   --cam2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
   --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/27904255/extrinsics_refined_icp \
   --num-frames 10 \
-  --max-iterations 50 \
+  --method multiscale \
+  --max-iterations 100 \
   --distance-threshold 0.05 \
-  --voxel-size 0.01 \
-  --visualize  # 可选：保存点云PLY文件用于可视化
+  --voxel-size 0.001 \
+  --max-depth 1.0 \
+  --visualize
+
+# RANSAC方法
+python align_left_right_camera.py \
+  --cam1 datasets/samples/.../camera1 \
+  --cam2 datasets/samples/.../camera2 \
+  --method ransac \
+  --output-dir output/ \
+  --num-frames 15
 ```
 
 **参数说明：**
@@ -284,13 +308,21 @@ python align_left_right_camera.py \
 - `--cam2`: 待对齐相机目录（camera 2）
 - `--output-dir`: 输出目录，对齐后的外参保存路径
 - `--num-frames`: 用于对齐的帧数（默认10）
-- `--max-iterations`: 每帧ICP最大迭代次数（默认50）
+- `--method`: 对齐方法选择
+  - `original`: 基本ICP对齐
+  - `robust`: 质量过滤和加权平均（默认，推荐）
+  - `multiscale`: 多尺度ICP（最鲁棒，推荐用于复杂场景）
+  - `ransac`: 基于特征的RANSAC-ICP（适用于有明显几何特征的场景）
+- `--max-iterations`: 每帧ICP最大迭代次数（默认100）
 - `--distance-threshold`: ICP对应点距离阈值，单位米（默认0.05）
-- `--voxel-size`: 点云降采样体素大小，单位米（默认0.01）
+- `--voxel-size`: 点云降采样体素大小，单位米（默认0.001）
+- `--max-depth`: 点云深度过滤阈值，单位米（默认1.0）
 - `--visualize`: 是否保存点云PLY文件用于可视化
+- `--min-fitness`: 最小fitness阈值（robust/multiscale方法，默认0.4）
+- `--max-rmse`: 最大RMSE阈值（robust/multiscale方法，默认0.1）
 
 **输出文件：**
-- `{camera_id}_left.npy`: 对齐后的外参文件，形状为 [N, 3, 4]，N为原始帧数
+- `{camera_id}.npy`: 对齐后的外参文件，形状为 [N, 3, 4]，N为原始帧数
 - `alignment_stats.png`: 对齐统计图表（fitness和RMSE）
 - `visualizations_alignment/`: 点云PLY文件（如果启用 --visualize）
 
@@ -303,72 +335,90 @@ python align_left_right_camera.py \
 
 ## 优化wrist camera pose
 
-使用两个已对齐的第三人称相机的组合点云来优化腕部相机的外参。`align_wrist_camera.py` 使用ICP算法将腕部相机与第三人称相机对齐。
+使用一个或两个第三人称相机的点云来优化腕部相机的外参。`align_wrist_camera.py` 使用先进的ICP算法将腕部相机与第三人称相机对齐，支持多尺度ICP和智能点过滤。
 
 **核心思想：**
 
-利用两个第三人称相机提供更完整的场景覆盖，通过组合它们的点云来获得更鲁棒的对齐结果。
+通过将第三人称相机提供的场景点云投影到腕部相机坐标系，并与腕部相机自身的深度点云进行ICP对齐，实现精确的姿态优化。支持单相机和双相机模式，双相机模式提供更完整的场景覆盖。
 
 **算法流程：**
 
-1. **创建组合点云：**
-   - 从两个第三人称相机的深度图创建3D点云
-   - 将两个点云转换到世界坐标系
-   - 合并两个点云形成完整的场景点云
+1. **创建场景点云：**
+   - 从一个或两个第三人称相机的深度图创建3D点云
+   - 将点云转换到世界坐标系并合并
+   - 支持自动加载已对齐的相机外参
 
-2. **投影到腕部相机：**
-   - 使用当前腕部相机外参将组合点云投影到腕部相机坐标系
-   - 过滤投影点，只保留腕部相机可见的最近点（处理遮挡）
-   - 对于每个像素，只保留最接近腕部相机深度图的点
+2. **智能投影和过滤：**
+   - 使用当前腕部相机外参将场景点云投影到腕部相机坐标系
+   - 深度过滤：只保留腕部相机可见的最近点（处理遮挡）
+   - 像素级过滤：对于每个像素只保留最接近GT深度的点
 
-3. **ICP对齐：**
+3. **多尺度ICP对齐：**
    - 源点云：过滤后的投影点云（来自第三人称相机）
    - 目标点云：腕部相机自身的深度点云
-   - 使用点到面ICP算法进行对齐
-   - 更新腕部相机外参
+   - 粗到精的多尺度策略（默认启用）
+   - 点到面ICP算法确保收敛精度
 
 4. **逐帧优化：**
    - 对每一帧独立进行ICP对齐
+   - 支持指定帧范围处理
    - 输出形状保持为 [N, 3, 4]，N为总帧数
 
 **使用方法：**
 
 ```bash
-
-# 使用已对齐的第二个第三人称相机外参（推荐）
+# 双相机模式（推荐，场景覆盖更完整）
 python align_wrist_camera.py \
-  --cam-ext1 high_conf/Sun_Jun_11_15:52:37_2023/23897859 \
-  --cam-ext2 high_conf/Sun_Jun_11_15:52:37_2023/27904255 \
-  --cam-wrist high_conf/Sun_Jun_11_15:52:37_2023/17368348 \
-  --output-dir high_conf/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp
+  --cam-ext1 datasets/samples/Fri_Jul__7_09:42:23_2023/22008760 \
+  --cam-ext2 datasets/samples/Fri_Jul__7_09:42:23_2023/24400334 \
+  --cam-wrist datasets/samples/Fri_Jul__7_09:42:23_2023/18026681 \
+  --output-dir datasets/samples/Fri_Jul__7_09:42:23_2023/18026681/extrinsics_refined
 
-# 自定义参数
+# 单相机模式（适用于只有一个第三人称相机的情况）
+python align_wrist_camera.py \
+  --cam-ext1 datasets/samples/Fri_Jul__7_09:42:23_2023/22008760 \
+  --cam-wrist datasets/samples/Fri_Jul__7_09:42:23_2023/18026681 \
+  --output-dir datasets/samples/Fri_Jul__7_09:42:23_2023/18026681/extrinsics_refined
+
+# 高级用法：自定义参数和帧范围
 python align_wrist_camera.py \
   --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
   --cam-ext2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
   --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
-  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined_icp \
-  --max-iterations 50 \
+  --output-dir datasets/samples/Sun_Jun_11_15:52:37_2023/17368348/extrinsics_refined \
+  --max-iterations 80 \
   --distance-threshold 0.05 \
   --voxel-size 0.001 \
+  --icp-levels 3 \
+  --voxel-factor 2.0 \
+  --max-depth 1.0 \
   --start-frame 0 \
   --end-frame 100 \
-  --visualize  # 可选：保存点云PLY文件用于可视化
+  --visualize
+
+# 多尺度ICP
+python align_wrist_camera.py \
+  --cam-ext1 datasets/samples/.../camera1 \
+  --cam-wrist datasets/samples/.../wrist \
+  --multiscale \
+  --output-dir output/
 ```
 
 **参数说明：**
-- `--cam-ext1`: 第一个第三人称相机目录（参考相机）
-- `--cam-ext2`: 第二个第三人称相机目录
-- `--cam-wrist`: 腕部相机目录
-- `--use-aligned-ext2`: 是否使用已对齐的cam-ext2外参
-- `--aligned-ext2-path`: 已对齐的cam-ext2外参文件路径
+- `--cam-ext1`: 第一个第三人称相机目录（必需，作为参考）
+- `--cam-ext2`: 第二个第三人称相机目录（可选，提供更完整场景覆盖）
+- `--cam-wrist`: 腕部相机目录（必需）
 - `--output-dir`: 输出目录，对齐后的腕部相机外参保存路径
-- `--max-iterations`: 每帧ICP最大迭代次数（默认50）
+- `--max-iterations`: 每帧ICP最大迭代次数（默认80）
 - `--distance-threshold`: ICP对应点距离阈值，单位米（默认0.05）
 - `--voxel-size`: 点云降采样体素大小，单位米（默认0.001）
-- `--start-frame`: 起始帧索引
-- `--end-frame`: 结束帧索引
-- `--visualize`: 是否保存点云PLY文件用于可视化
+- `--icp-levels`: 多尺度ICP层数（默认3，>=1）
+- `--voxel-factor`: 相邻尺度体素大小倍数（默认2.0）
+- `--max-depth`: 深度过滤阈值，单位米（默认1.0）
+- `--start-frame`: 起始帧索引（默认0）
+- `--end-frame`: 结束帧索引（默认全部帧）
+- `--multiscale`: 禁用多尺度ICP，使用单尺度模式
+- `--visualize`: 保存点云PLY文件用于可视化
 
 **输出文件：**
 - `{wrist_camera_id}.npy`: 对齐后的腕部相机外参文件，形状为 [N, 3, 4]

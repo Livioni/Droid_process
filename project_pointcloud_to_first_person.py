@@ -61,10 +61,14 @@ def load_camera_data(camera_dir, frame_idx, depth_dir=None):
 
     # Load extrinsics (use left camera for stereo)
     extrinsics_dir = camera_dir / "extrinsics"
-    extrinsics_path = extrinsics_dir / f"{camera_id}_left.npy"
-    if not extrinsics_path.exists():
-        raise FileNotFoundError(f"Extrinsics not found: {extrinsics_path}")
-    extrinsics_all = np.load(str(extrinsics_path))
+    try:
+        extrinsics_path = extrinsics_dir / f"{camera_id}_ma.npy"
+        extrinsics_all = np.load(str(extrinsics_path))
+        print(f"Loaded extrinsics from {extrinsics_path}")
+    except:
+        extrinsics_path = extrinsics_dir / f"{camera_id}_left.npy"
+        extrinsics_all = np.load(str(extrinsics_path))
+        print(f"Loaded extrinsics from {extrinsics_path}")
 
     if frame_idx >= len(extrinsics_all):
         raise ValueError(f"Frame {frame_idx} out of range. Max frame: {len(extrinsics_all)-1}")

@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-Align wrist camera using combined point clouds from two aligned third-person cameras.
+Align wrist camera using point clouds from one or two aligned third-person cameras.
 Uses ICP (Iterative Closest Point) to optimize wrist camera extrinsics.
 
-Usage:
+Usage (with two external cameras):
     python align_wrist_camera.py \
         --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
         --cam-ext2 datasets/samples/Sun_Jun_11_15:52:37_2023/27904255 \
+        --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
+        --output-dir datasets/samples/.../17368348/extrinsics_refined_icp
+
+Usage (with one external camera):
+    python align_wrist_camera.py \
+        --cam-ext1 datasets/samples/Sun_Jun_11_15:52:37_2023/23897859 \
         --cam-wrist datasets/samples/Sun_Jun_11_15:52:37_2023/17368348 \
         --output-dir datasets/samples/.../17368348/extrinsics_refined_icp
 
@@ -16,78 +22,150 @@ Output:
 """
 
 import numpy as np
-import os,glob
+import os
 import open3d as o3d
 from pathlib import Path
 import argparse
+import cv2
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # Import functions from the projection script
 from project_pointcloud_to_first_person import (
-    load_camera_data,
     create_pointcloud_from_depth,
     transform_points_to_camera2,
     compute_relative_pose
 )
 
 
+def load_extrinsics_npys(camera_dir, camera_id=None, prefer_refined=True):
+    """
+    Load extrinsics array with priority (refined first by default).
+    If prefer_refined is False, only search extrinsics/ npys.
+    """
+    camera_dir = Path(camera_dir)
+    camera_id = camera_id or camera_dir.name
+
+    refined_dir = camera_dir / "extrinsics_refined"
+    raw_dir = camera_dir / "extrinsics"
+
+    candidates = []
+
+    if prefer_refined:
+        candidates.extend([
+            refined_dir / f"{camera_id}.npy",
+            refined_dir / f"{camera_id}_left.npy",
+        ])
+        if refined_dir.exists():
+            candidates.extend(sorted(refined_dir.glob("*.npy")))
+
+    # Always try raw extrinsics
+    candidates.append(raw_dir / f"{camera_id}_left.npy")
+    if raw_dir.exists():
+        candidates.extend(sorted(raw_dir.glob("*.npy")))
+
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                extrinsics_all = np.load(str(candidate), allow_pickle=True)
+                print(f"Loaded extrinsics from {candidate}")
+                return extrinsics_all
+            except Exception as e:
+                print(f"  Warning: failed to load extrinsics from {candidate}: {e}")
+                continue
+
+    raise FileNotFoundError(
+        f"No extrinsics npy found in {refined_dir} or {raw_dir}"
+    )
+
+def load_camera_data(camera_dir, frame_idx, depth_dir=None, prefer_refined=True):
+    """Load image, depth, intrinsics, and extrinsics for a camera."""
+    camera_dir = Path(camera_dir)
+    camera_id = camera_dir.name
+    frame_idx = int(frame_idx)  # Ensure frame_idx is an integer
+    
+
+    # Load image (use left camera for stereo)
+    image_path = camera_dir / "images" / "left" / f"{int(frame_idx):06d}.png"
+    if not image_path.exists():
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    image = cv2.imread(str(image_path))
+
+    # Load depth - use specified depth directory if provided, otherwise use default
+    if depth_dir is not None:
+        depth_path = Path(depth_dir) / f"{int(frame_idx):06d}.npz"
+    else:
+        depth_path = camera_dir / "depth_npy" / f"{int(frame_idx):06d}.npz"
+
+    if not depth_path.exists():
+        raise FileNotFoundError(f"Depth not found: {depth_path}")
+    depth = np.load(str(depth_path))['depth']
+
+    # Load intrinsics (use left camera for stereo)
+    intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}_left.npy"
+    if not intrinsics_path.exists():
+        raise FileNotFoundError(f"Intrinsics not found: {intrinsics_path}")
+    intrinsics = np.load(str(intrinsics_path))
+
+    # Load extrinsics
+    extrinsics_all = load_extrinsics_npys(camera_dir, camera_id, prefer_refined=prefer_refined)
+
+    if frame_idx >= len(extrinsics_all):
+        raise ValueError(f"Frame {frame_idx} out of range. Max frame: {len(extrinsics_all)-1}")
+
+    extrinsics = extrinsics_all[frame_idx]  # Shape: (3, 4)
+
+    return image, depth, intrinsics, extrinsics
+
 class WristCameraAligner:
-    """Align wrist camera using combined point clouds from two third-person cameras."""
+    """Align wrist camera using point clouds from one or two third-person cameras."""
 
     def __init__(self, cam_ext1_dir, cam_ext2_dir, cam_wrist_dir):
         """
         Initialize the wrist camera aligner.
-        
+
         Args:
             cam_ext1_dir: First third-person camera directory (reference)
-            cam_ext2_dir: Second third-person camera directory
+            cam_ext2_dir: Second third-person camera directory (optional)
             cam_wrist_dir: Wrist camera directory
         """
         self.cam_ext1_dir = cam_ext1_dir
         self.cam_ext2_dir = cam_ext2_dir
         self.cam_wrist_dir = cam_wrist_dir
+        self.use_ext2 = cam_ext2_dir is not None
 
         # Load camera paths
         cam_ext1_path = Path(cam_ext1_dir)
-        cam_ext2_path = Path(cam_ext2_dir)
         cam_wrist_path = Path(cam_wrist_dir)
-        
+
         self.cam_ext1_id = cam_ext1_path.name
-        self.cam_ext2_id = cam_ext2_path.name
         self.cam_wrist_id = cam_wrist_path.name
 
         # Load intrinsics
         intrinsics_path_ext1 = cam_ext1_path / "intrinsics" / f"{self.cam_ext1_id}_left.npy"
-        intrinsics_path_ext2 = cam_ext2_path / "intrinsics" / f"{self.cam_ext2_id}_left.npy"
         intrinsics_path_wrist = cam_wrist_path / "intrinsics" / f"{self.cam_wrist_id}_left.npy"
-        
+
         self.K_ext1 = np.load(str(intrinsics_path_ext1))
-        self.K_ext2 = np.load(str(intrinsics_path_ext2))
         self.K_wrist = np.load(str(intrinsics_path_wrist))
 
-        # Load extrinsics for external cameras
-        extrinsics_dir_ext1 = cam_ext1_path / "extrinsics"
-        extrinsics_files_ext1 = list(extrinsics_dir_ext1.glob("*_left.npy"))
-        self.ext1_all = np.load(str(extrinsics_files_ext1[0]))
-        
-        # Load ext2 extrinsics (aligned or original)
-        try:
-            extrinsics_refined_dir = cam_ext2_path / "extrinsics_refined_icp" 
-            extrinsics_file = glob.glob(os.path.join(extrinsics_refined_dir, '*.npy'))[0]
-            self.ext2_all = np.load(extrinsics_file,allow_pickle=True)
-        except:
-            extrinsics_dir_ext2 = cam_ext2_path / "extrinsics"
-            extrinsics_files_ext2 = list(extrinsics_dir_ext2.glob("*_left.npy"))
-            self.ext2_all = np.load(str(extrinsics_files_ext2[0]))
+        if self.use_ext2:
+            cam_ext2_path = Path(cam_ext2_dir)
+            self.cam_ext2_id = cam_ext2_path.name
+            intrinsics_path_ext2 = cam_ext2_path / "intrinsics" / f"{self.cam_ext2_id}_left.npy"
+            self.K_ext2 = np.load(str(intrinsics_path_ext2))
+
+        # Load extrinsics (prefer refined, fallback to raw {camera}_left.npy)
+        self.ext1_all = load_extrinsics_npys(cam_ext1_path, self.cam_ext1_id, prefer_refined=True)
+
+        if self.use_ext2:
+            self.ext2_all = load_extrinsics_npys(cam_ext2_path, self.cam_ext2_id, prefer_refined=True)
         
         # Load wrist camera extrinsics (will be optimized)
-        extrinsics_dir_wrist = cam_wrist_path / "extrinsics"
-        extrinsics_files_wrist = list(extrinsics_dir_wrist.glob("*_left.npy"))
-        self.ext_wrist_all = np.load(str(extrinsics_files_wrist[0]))
+        self.ext_wrist_all = load_extrinsics_npys(cam_wrist_path, self.cam_wrist_id, prefer_refined=False)
 
         print(f"External camera 1 ({self.cam_ext1_id}): {len(self.ext1_all)} frames")
-        print(f"External camera 2 ({self.cam_ext2_id}): {len(self.ext2_all)} frames")
+        if self.use_ext2:
+            print(f"External camera 2 ({self.cam_ext2_id}): {len(self.ext2_all)} frames")
         print(f"Wrist camera ({self.cam_wrist_id}): {len(self.ext_wrist_all)} frames")
 
     def filter_projected_points_by_depth(self, points_3d_wrist, depth_wrist, K_wrist, 
@@ -187,16 +265,22 @@ class WristCameraAligner:
         return filtered_points
 
     def align_frame_icp(self, frame_idx, max_iterations=50, distance_threshold=0.05,
-                       voxel_size=0.001, visualize=False):
+                       voxel_size=0.001, visualize=False, icp_levels=3, voxel_factor=2.0,
+                       use_multiscale=True, max_depth=10.0):
         """
         Align wrist camera for a single frame using combined point clouds from both external cameras.
+        Uses a coarse-to-fine (multiscale) ICP strategy for better robustness by default.
         
         Args:
             frame_idx: Frame index
-            max_iterations: Maximum ICP iterations
-            distance_threshold: Distance threshold for ICP correspondence (in meters)
-            voxel_size: Voxel size for downsampling (in meters)
+            max_iterations: Maximum ICP iterations (budget distributed across scales)
+            distance_threshold: Base distance threshold for ICP correspondence (in meters)
+            voxel_size: Finest voxel size for downsampling (in meters)
             visualize: Whether to visualize point clouds
+            icp_levels: Number of multiscale levels (>=1)
+            voxel_factor: Multiplicative factor between consecutive voxel sizes
+            use_multiscale: Whether to run multiscale ICP (False -> single-scale)
+            max_depth: Filter out depth values greater than this (in meters)
             
         Returns:
             optimized_ext_wrist: Optimized wrist camera extrinsics [R|t] 3x4 matrix
@@ -210,41 +294,54 @@ class WristCameraAligner:
         
         # Load depth maps
         cam_ext1_depth_dir = os.path.join(self.cam_ext1_dir, "depth_npy")
-        cam_ext2_depth_dir = os.path.join(self.cam_ext2_dir, "depth_npy")
         cam_wrist_depth_dir = os.path.join(self.cam_wrist_dir, "depth_npy")
-        
-        _, depth_ext1, _, ext1 = load_camera_data(self.cam_ext1_dir, frame_idx, cam_ext1_depth_dir)
-        _, depth_ext2, _, ext2 = load_camera_data(self.cam_ext2_dir, frame_idx, cam_ext2_depth_dir)
-        _, depth_wrist, _, _ = load_camera_data(self.cam_wrist_dir, frame_idx, cam_wrist_depth_dir)
-        
-        # Use loaded ext2 if not using aligned version
-        if frame_idx < len(self.ext2_all):
-            ext2 = self.ext2_all[frame_idx]
+
+        _, depth_ext1, _, ext1 = load_camera_data(self.cam_ext1_dir, frame_idx, cam_ext1_depth_dir, prefer_refined=True)
+        _, depth_wrist, _, _ = load_camera_data(self.cam_wrist_dir, frame_idx, cam_wrist_depth_dir, prefer_refined=False)
+
+        depth_ext1 = self._clamp_depth(depth_ext1, max_depth)
+        depth_wrist = self._clamp_depth(depth_wrist, max_depth)
+
+        if self.use_ext2:
+            cam_ext2_depth_dir = os.path.join(self.cam_ext2_dir, "depth_npy")
+            _, depth_ext2, _, ext2 = load_camera_data(self.cam_ext2_dir, frame_idx, cam_ext2_depth_dir, prefer_refined=True)
+            depth_ext2 = self._clamp_depth(depth_ext2, max_depth)
+            # Use loaded ext2 if not using aligned version
+            if frame_idx < len(self.ext2_all):
+                ext2 = self.ext2_all[frame_idx]
         
         # Create point clouds from external cameras in their own coordinates
-        points_3d_ext1, _ = create_pointcloud_from_depth(depth_ext1, self.K_ext1, max_depth=10.0)
-        points_3d_ext2, _ = create_pointcloud_from_depth(depth_ext2, self.K_ext2, max_depth=10.0)
-        
+        points_3d_ext1, _ = create_pointcloud_from_depth(depth_ext1, self.K_ext1, max_depth=max_depth)
+
         print(f"  External camera 1 points: {len(points_3d_ext1)}")
-        print(f"  External camera 2 points: {len(points_3d_ext2)}")
-        
-        if len(points_3d_ext1) < 100 or len(points_3d_ext2) < 100:
-            print(f"  Insufficient external camera points, skipping frame {frame_idx}")
-            return ext_wrist_initial, 0.0, float('inf')
+
+        if self.use_ext2:
+            points_3d_ext2, _ = create_pointcloud_from_depth(depth_ext2, self.K_ext2, max_depth=max_depth)
+            print(f"  External camera 2 points: {len(points_3d_ext2)}")
+            if len(points_3d_ext1) < 100 or len(points_3d_ext2) < 100:
+                print(f"  Insufficient external camera points, skipping frame {frame_idx}")
+                return ext_wrist_initial, 0.0, float('inf')
+        else:
+            if len(points_3d_ext1) < 100:
+                print(f"  Insufficient external camera points, skipping frame {frame_idx}")
+                return ext_wrist_initial, 0.0, float('inf')
         
         # Transform external camera points to world coordinates
         T_ext1 = np.eye(4)
         T_ext1[:3, :] = ext1
-        
-        T_ext2 = np.eye(4)
-        T_ext2[:3, :] = ext2
-        
+
         points_3d_world_ext1 = self._transform_points(points_3d_ext1, T_ext1)
-        points_3d_world_ext2 = self._transform_points(points_3d_ext2, T_ext2)
-        
-        # Combine point clouds from both external cameras
-        points_3d_world_combined = np.vstack([points_3d_world_ext1, points_3d_world_ext2])
-        
+
+        if self.use_ext2:
+            T_ext2 = np.eye(4)
+            T_ext2[:3, :] = ext2
+            points_3d_world_ext2 = self._transform_points(points_3d_ext2, T_ext2)
+            # Combine point clouds from both external cameras
+            points_3d_world_combined = np.vstack([points_3d_world_ext1, points_3d_world_ext2])
+        else:
+            # Use only first external camera
+            points_3d_world_combined = points_3d_world_ext1
+
         print(f"  Combined external points: {len(points_3d_world_combined)}")
         
         # Transform combined world points to wrist camera coordinates
@@ -267,7 +364,7 @@ class WristCameraAligner:
             return ext_wrist_initial, 0.0, float('inf')
         
         # Create point cloud from wrist camera depth (target)
-        points_3d_wrist_gt, _ = create_pointcloud_from_depth(depth_wrist, self.K_wrist, max_depth=10.0)
+        points_3d_wrist_gt, _ = create_pointcloud_from_depth(depth_wrist, self.K_wrist, max_depth=max_depth)
         
         if len(points_3d_wrist_gt) < 100:
             print(f"  Insufficient wrist camera points ({len(points_3d_wrist_gt)}), skipping")
@@ -282,35 +379,49 @@ class WristCameraAligner:
         
         target_pcd = o3d.geometry.PointCloud()
         target_pcd.points = o3d.utility.Vector3dVector(points_3d_wrist_gt)
-        
-        # Downsample for efficiency
-        source_pcd = source_pcd.voxel_down_sample(voxel_size)
-        target_pcd = target_pcd.voxel_down_sample(voxel_size)
-        
-        print(f"  After downsampling - Source: {len(source_pcd.points)}, Target: {len(target_pcd.points)}")
-        
-        # Estimate normals for better ICP
-        source_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
-        target_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
-        
-        # Run ICP - align source (projected external) to target (wrist)
-        init_transform = np.eye(4)
-        
-        # Use point-to-plane ICP for better convergence
-        reg_result = o3d.pipelines.registration.registration_icp(
-            source_pcd, target_pcd, distance_threshold, init_transform,
-            o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-            o3d.pipelines.registration.ICPConvergenceCriteria(
-                max_iteration=max_iterations,
-                relative_fitness=1e-6,
-                relative_rmse=1e-6
+
+        if use_multiscale:
+            reg_result, T_icp = self._run_multiscale_icp(
+                source_pcd,
+                target_pcd,
+                distance_threshold,
+                voxel_size,
+                max_iterations,
+                icp_levels,
+                voxel_factor,
             )
-        )
+
+            if reg_result is None:
+                print("  ICP failed (no valid multiscale levels)")
+                return ext_wrist_initial, 0.0, float('inf')
+        else:
+            # Single-scale fallback: downsample once then run ICP
+            source_pcd = source_pcd.voxel_down_sample(voxel_size)
+            target_pcd = target_pcd.voxel_down_sample(voxel_size)
+
+            print(f"  Single-scale downsampled - Source: {len(source_pcd.points)}, Target: {len(target_pcd.points)}")
+
+            radius = max(voxel_size * 4.0, 0.01)
+            source_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=radius, max_nn=30))
+            target_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=radius, max_nn=30))
+
+            reg_result = o3d.pipelines.registration.registration_icp(
+                source_pcd,
+                target_pcd,
+                distance_threshold,
+                np.eye(4),
+                o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(
+                    max_iteration=max_iterations,
+                    relative_fitness=1e-6,
+                    relative_rmse=1e-6
+                )
+            )
+            T_icp = reg_result.transformation
         
         print(f"  ICP fitness: {reg_result.fitness:.4f}, RMSE: {reg_result.inlier_rmse:.4f}")
-        
-        # The ICP transformation is in wrist camera coordinates
-        T_icp = reg_result.transformation
         
         # Update wrist camera extrinsics
         # T_world_to_wrist_new = T_icp @ T_world_to_wrist
@@ -332,8 +443,79 @@ class WristCameraAligner:
         points_transformed = (T @ points_homogeneous.T).T
         return points_transformed[:, :3]
 
+    def _clamp_depth(self, depth, max_depth):
+        """Zero out depth values greater than max_depth (keep shape)."""
+        if max_depth is None:
+            return depth
+        depth_clamped = depth.copy()
+        depth_clamped = np.where(np.isfinite(depth_clamped) & (depth_clamped <= max_depth), depth_clamped, 0)
+        return depth_clamped
+
+    def _build_multiscale_schedule(self, voxel_size, distance_threshold, max_iterations,
+                                   icp_levels, voxel_factor):
+        """Construct multiscale ICP schedule from finest voxel size and thresholds."""
+        levels = max(1, int(icp_levels))
+        factor = max(1.0, float(voxel_factor))
+        # Coarse-to-fine voxel sizes (largest first)
+        voxel_sizes = [voxel_size * (factor ** i) for i in reversed(range(levels))]
+        distance_thresholds = [distance_threshold * (factor ** i) for i in reversed(range(levels))]
+        
+        # Distribute iteration budget across levels (ensure minimum iterations)
+        base_iters = max(5, max_iterations // levels)
+        max_iters = [base_iters] * (levels - 1)
+        max_iters.append(max(max_iterations - base_iters * (levels - 1), base_iters))
+        
+        return list(zip(voxel_sizes, distance_thresholds, max_iters))
+
+    def _run_multiscale_icp(self, source_pcd, target_pcd, distance_threshold, voxel_size,
+                            max_iterations, icp_levels, voxel_factor):
+        """Run coarse-to-fine ICP and return the final registration result and transform."""
+        schedule = self._build_multiscale_schedule(
+            voxel_size, distance_threshold, max_iterations, icp_levels, voxel_factor
+        )
+        
+        current_transform = np.eye(4)
+        reg_result = None
+        
+        for level_idx, (vs, dt, iters) in enumerate(schedule, start=1):
+            src_lvl = source_pcd.voxel_down_sample(vs)
+            tgt_lvl = target_pcd.voxel_down_sample(vs)
+            
+            if len(src_lvl.points) == 0 or len(tgt_lvl.points) == 0:
+                print(f"  [Level {level_idx}] skipped (empty point cloud after voxel {vs:.4f})")
+                continue
+            
+            # Estimate normals with a radius proportional to voxel size
+            radius = max(vs * 4.0, 0.01)
+            src_lvl.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=radius, max_nn=30))
+            tgt_lvl.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                radius=radius, max_nn=30))
+            
+            reg_result = o3d.pipelines.registration.registration_icp(
+                src_lvl,
+                tgt_lvl,
+                dt,
+                current_transform,
+                o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(
+                    max_iteration=iters,
+                    relative_fitness=1e-6,
+                    relative_rmse=1e-6
+                )
+            )
+            
+            current_transform = reg_result.transformation
+            print(
+                f"  [Level {level_idx}] voxel={vs:.4f}, thr={dt:.4f}, "
+                f"iters={iters}, fitness={reg_result.fitness:.4f}, rmse={reg_result.inlier_rmse:.4f}"
+            )
+        
+        return reg_result, current_transform
+
     def align_all_frames(self, output_dir, max_iterations=50, distance_threshold=0.05,
-                        voxel_size=0.001, start_frame=None, end_frame=None, visualize=False):
+                        voxel_size=0.001, start_frame=None, end_frame=None, visualize=False,
+                        icp_levels=3, voxel_factor=2.0, use_multiscale=True, max_depth=10.0):
         """
         Align wrist camera for all frames.
         
@@ -345,6 +527,10 @@ class WristCameraAligner:
             start_frame: Starting frame index
             end_frame: Ending frame index
             visualize: Whether to visualize point clouds
+            icp_levels: Number of multiscale levels (>=1)
+            voxel_factor: Multiplicative factor between coarse-to-fine voxel sizes
+            use_multiscale: Whether to run multiscale ICP (False -> single-scale)
+            max_depth: Discard depth values greater than this (meters)
         """
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -372,7 +558,8 @@ class WristCameraAligner:
             try:
                 # Align wrist camera for this frame
                 optimized_ext_wrist, fitness, rmse = self.align_frame_icp(
-                    frame_idx, max_iterations, distance_threshold, voxel_size, visualize
+                    frame_idx, max_iterations, distance_threshold, voxel_size, visualize,
+                    icp_levels, voxel_factor, use_multiscale, max_depth
                 )
                 
                 aligned_ext_wrist_all[frame_idx] = optimized_ext_wrist
@@ -476,8 +663,8 @@ def create_argument_parser():
     )
     parser.add_argument(
         "--cam-ext2",
-        default="datasets/samples/Sun_Jun_11_15:52:37_2023/27904255",
-        help="Second third-person camera directory"
+        default=None,
+        help="Second third-person camera directory (optional)"
     )
     parser.add_argument(
         "--cam-wrist",
@@ -498,14 +685,38 @@ def create_argument_parser():
     parser.add_argument(
         "--distance-threshold",
         type=float,
-        default=0.03,
+        default=0.05,
         help="Distance threshold for ICP correspondence (in meters)"
     )
     parser.add_argument(
         "--voxel-size",
         type=float,
-        default=0.005,
+        default=0.001,
         help="Voxel size for downsampling (in meters)"
+    )
+    parser.add_argument(
+        "--icp-levels",
+        type=int,
+        default=3,
+        help="Number of coarse-to-fine ICP levels (>=1)"
+    )
+    parser.add_argument(
+        "--voxel-factor",
+        type=float,
+        default=2.0,
+        help="Multiplicative factor between coarse and fine voxel sizes"
+    )
+    parser.add_argument(
+        "--max-depth",
+        type=float,
+        default=1.0,
+        help="Ignore depth values greater than this (meters)"
+    )
+    parser.add_argument(
+        "--multiscale",
+        action="store_true",
+        default=False,
+        help="Disable multiscale ICP and use single-scale ICP"
     )
     parser.add_argument(
         "--start-frame",
@@ -534,10 +745,14 @@ def main():
     args = parser.parse_args()
     
     print("="*80)
-    print("Wrist Camera Alignment using Combined Third-Person Point Clouds")
+    if args.cam_ext2 is not None:
+        print("Wrist Camera Alignment using Combined Third-Person Point Clouds")
+    else:
+        print("Wrist Camera Alignment using Single Third-Person Point Cloud")
     print("="*80)
     print(f"External camera 1 (reference): {args.cam_ext1}")
-    print(f"External camera 2: {args.cam_ext2}")
+    if args.cam_ext2 is not None:
+        print(f"External camera 2: {args.cam_ext2}")
     print(f"Wrist camera: {args.cam_wrist}")
     print(f"Output directory: {args.output_dir}")
     
@@ -556,7 +771,11 @@ def main():
         args.voxel_size,
         args.start_frame,
         args.end_frame,
-        args.visualize
+        args.visualize,
+        args.icp_levels,
+        args.voxel_factor,
+        args.multiscale,
+        args.max_depth
     )
     
     print(f"\n{'='*80}")
