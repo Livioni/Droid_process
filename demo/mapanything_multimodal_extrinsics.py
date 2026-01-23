@@ -281,7 +281,7 @@ def main() -> None:
     parser.add_argument(
         "--output_name",
         type=str,
-        default=None,
+        default="mapanything.npy",
         help="Output filename inside output_dir (default: {tgt_cam_id}_mapanything.npy).",
     )
     parser.add_argument(
@@ -384,8 +384,8 @@ def main() -> None:
             memory_efficient_inference=False,
             use_amp=use_amp,
             amp_dtype=args.amp_dtype,
-            apply_mask=True,
-            mask_edges=True,
+            apply_mask=False,
+            mask_edges=False,
             apply_confidence_mask=False,
             confidence_percentile=10,
             ignore_calibration_inputs=False,

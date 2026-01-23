@@ -550,7 +550,8 @@ class WristCameraAligner:
         # Statistics
         fitness_scores = []
         rmse_scores = []
-        
+        well_aligned_frames = []  # Frames with fitness > 0.6
+
         total_frames = end_frame - start_frame + 1
         successful_frames = 0
         
@@ -566,6 +567,10 @@ class WristCameraAligner:
                 fitness_scores.append(fitness)
                 rmse_scores.append(rmse)
                 successful_frames += 1
+
+                # Check if fitness is good enough (> 0.6)
+                if fitness > 0.6:
+                    well_aligned_frames.append(f"{frame_idx:06d}")
                 
                 # Save intermediate results every 10 frames
                 if frame_idx % 10 == 0:
@@ -582,7 +587,18 @@ class WristCameraAligner:
         # Save final results
         output_file = output_path / f"{self.cam_wrist_id}.npy"
         np.save(output_file, aligned_ext_wrist_all)
-        
+
+        # Save well-aligned frames list
+        aligned_txt_path = output_path.parent / "aligned.txt"
+        if well_aligned_frames:
+            with open(aligned_txt_path, 'w') as f:
+                for frame_name in well_aligned_frames:
+                    f.write(f"{frame_name}\n")
+            print(f"Well-aligned frames (fitness > 0.6) saved to: {aligned_txt_path}")
+            print(f"Number of well-aligned frames: {len(well_aligned_frames)}")
+        else:
+            print("No frames with fitness > 0.6 found")
+
         # Print summary
         print(f"\nAlignment completed!")
         print(f"Total frames: {total_frames}")

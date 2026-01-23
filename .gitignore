@@ -6,7 +6,7 @@ checkpoints/
 visualizations/
 weights/
 output/
-datasets/
+/datasets
 log.txt
 *.npz
 *.npy
@@ -14,6 +14,10 @@ projected_depths_wrist
 visualizations_wrist_alignment
 visualizations_alignment
 hight_conf/
+/samples
+/processed_droid
+batch_processing.log
+droid_pipeline.log
 
 # Distribution / packaging
 workspace/

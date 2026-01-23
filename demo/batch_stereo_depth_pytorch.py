@@ -142,7 +142,7 @@ def get_args_parser():
     # 模型参数
     parser.add_argument('--model_type', default='XL', type=str,
                         help='模型类型: S, M, L, XL')
-    parser.add_argument('--num_refine', default=3, type=int,
+    parser.add_argument('--num_refine', default=9, type=int,
                         help='局部迭代refinement次数')
     parser.add_argument('--torch_compile', action='store_true', 
                         help='使用torch.compile加速')

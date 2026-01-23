@@ -377,7 +377,7 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize temporal point clouds for a single camera")
     parser.add_argument(
         "--camera",
-        default="datasets/samples/Fri_Jul__7_09:42:23_2023/18026681",
+        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/18026681",
         help="Camera directory path"
     )
     parser.add_argument(
@@ -395,7 +395,7 @@ def main():
     parser.add_argument(
         "--downsample",
         type=int,
-        default=2,
+        default=10,
         help="Downsample factor for points (default: 1, no downsampling)"
     )
 

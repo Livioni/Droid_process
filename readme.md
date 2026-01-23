@@ -126,12 +126,23 @@ datasets/samples
 
 ### 批量处理所有相机
 
+#### 使用Foundation Stereos模型
+
+```bash
+python demo/batch_stereo_depth_foundation.py  \
+        --dataset_root /opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:38_2023 \
+        --save_visualization
+```
+
+
+#### 使用S2M2模型
+
 使用 `process_camera_data.py` 提取数据后，可以使用修改后的批量脚本自动处理所有相机：
 
 ```bash
 # 处理所有相机
 python demo/batch_stereo_depth_pytorch.py \
-  --dataset_root datasets/samples/Fri_Jul__7_09:42:23_2023 \
+  --dataset_root processed_droid/Fri_Aug_18_11:40:38_2023 \
   --model_type XL \
   --confidence_threshold 0.9 \
   --depth_storage compressed \

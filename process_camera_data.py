@@ -301,11 +301,11 @@ def process_camera_data(input_dir, output_dir):
             except Exception as e:
                 print(f"Error extracting intrinsics from {svo_file.name}: {e}")
 
-            print(f"Extracting raw depth from {svo_file.name}...")
-            try:
-                extract_raw_depth_from_svo(svo_file, raw_depth_dir)
-            except Exception as e:
-                print(f"Error extracting raw depth from {svo_file.name}: {e}")
+            # print(f"Extracting raw depth from {svo_file.name}...")
+            # try:
+            #     extract_raw_depth_from_svo(svo_file, raw_depth_dir)
+            # except Exception as e:
+            #     print(f"Error extracting raw depth from {svo_file.name}: {e}")
         else:
             print(f"SVO file not found: {svo_file}")
 

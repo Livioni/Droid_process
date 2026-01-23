@@ -22,13 +22,60 @@ from pathlib import Path
 import argparse
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import cv2
 
 # Import functions from the projection script
 from project_pointcloud_to_first_person import (
-    load_camera_data,
     create_pointcloud_from_depth,
 )
 
+def load_camera_data(camera_dir, frame_idx, depth_dir=None):
+    """Load image, depth, intrinsics, and extrinsics for a camera."""
+    camera_dir = Path(camera_dir)
+    camera_id = camera_dir.name
+    frame_idx = int(frame_idx)  # Ensure frame_idx is an integer
+    
+
+    # Load image (use left camera for stereo)
+    image_path = camera_dir / "images" / "left" / f"{int(frame_idx):06d}.png"
+    if not image_path.exists():
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    image = cv2.imread(str(image_path))
+
+    # Load depth - use specified depth directory if provided, otherwise use default
+    if depth_dir is not None:
+        depth_path = Path(depth_dir) / f"{int(frame_idx):06d}.npz"
+    else:
+        depth_path = camera_dir / "depth_npy" / f"{int(frame_idx):06d}.npz"
+
+    if not depth_path.exists():
+        raise FileNotFoundError(f"Depth not found: {depth_path}")
+    depth = np.load(str(depth_path))['depth']
+
+    # Load intrinsics (use left camera for stereo)
+    intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}_left.npy"
+    if not intrinsics_path.exists():
+        raise FileNotFoundError(f"Intrinsics not found: {intrinsics_path}")
+    intrinsics = np.load(str(intrinsics_path))
+
+    # Load extrinsics (use left camera for stereo)
+    try:
+        extrinsics_dir = camera_dir / "extrinsics_refined"
+        extrinsics_path = extrinsics_dir / f"mapanything.npy"
+        extrinsics_all = np.load(str(extrinsics_path))
+        print(f"Loaded extrinsics from {extrinsics_path}")
+    except:
+        extrinsics_dir = camera_dir / "extrinsics"
+        extrinsics_path = extrinsics_dir / f"{camera_id}_left.npy"
+        extrinsics_all = np.load(str(extrinsics_path))
+        print(f"Loaded extrinsics from {extrinsics_path}")
+
+    if frame_idx >= len(extrinsics_all):
+        raise ValueError(f"Frame {frame_idx} out of range. Max frame: {len(extrinsics_all)-1}")
+
+    extrinsics = extrinsics_all[frame_idx]  # Shape: (3, 4)
+
+    return image, depth, intrinsics, extrinsics
 
 class StaticCameraAligner:
     """Align two static third-person cameras using ICP."""
@@ -63,9 +110,9 @@ class StaticCameraAligner:
         extrinsics_files1 = list(extrinsics_dir1.glob("*_left.npy"))
         self.ext1_all = np.load(str(extrinsics_files1[0]))
         
-        extrinsics_dir2 = cam2_path / "extrinsics"
+        extrinsics_dir2 = cam2_path / "extrinsics_refined"
         try:
-            extrinsics_files2 = list(extrinsics_dir2.glob("*_ma.npy"))
+            extrinsics_files2 = list(extrinsics_dir2.glob("mapanything.npy"))
             self.ext2_all = np.load(str(extrinsics_files2[0]))
             print(f"Loaded extrinsics from {extrinsics_files2[0]}")
         except:
@@ -77,7 +124,7 @@ class StaticCameraAligner:
         print(f"Camera 2 ({self.cam2_id}): {len(self.ext2_all)} frames")
 
     def align_single_frame(self, frame_idx, max_iterations=50, distance_threshold=0.05,
-                          voxel_size=0.01, max_depth=10.0, visualize=False):
+                          voxel_size=0.01, max_depth=1.0, visualize=False):
         """
         Align camera 2 to camera 1 for a single frame using ICP.
         
@@ -534,7 +581,7 @@ class StaticCameraAligner:
         return T_avg, transformations, fitness_scores, rmse_scores
 
     def align_cameras_ransac(self, num_frames=10, max_iterations=50, distance_threshold=0.05,
-                            voxel_size=0.01, max_depth=10.0, visualize=False,
+                            voxel_size=0.01, max_depth=1.0, visualize=False,
                             min_fitness=0.2, max_rmse=0.1):
         """
         RANSAC-based alignment for multiple frames with quality filtering.
@@ -598,7 +645,7 @@ class StaticCameraAligner:
         return T_avg, transformations, fitness_scores, rmse_scores
 
     def align_cameras(self, num_frames=10, max_iterations=50, distance_threshold=0.05,
-                     voxel_size=0.01, max_depth=10.0, visualize=False):
+                     voxel_size=0.01, max_depth=1.0, visualize=False):
         """
         Align camera 2 to camera 1 using the first N frames and averaging.
 
@@ -790,17 +837,17 @@ def create_argument_parser():
     )
     parser.add_argument(
         "--cam1",
-        default="datasets/samples/Fri_Jul__7_09:42:23_2023/22008760",
+        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/22008760",
         help="Reference camera directory (camera 1)"
     )
     parser.add_argument(
         "--cam2",
-        default="datasets/samples/Fri_Jul__7_09:42:23_2023/24400334",
+        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/24400334",
         help="Camera to be aligned (camera 2)"
     )
     parser.add_argument(
         "--output-dir",
-        default="datasets/samples/Fri_Jul__7_09:42:23_2023/24400334/extrinsics_refined",
+        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/24400334/extrinsics_refined",
         help="Output directory for aligned extrinsics"
     )
     parser.add_argument(
@@ -824,7 +871,7 @@ def create_argument_parser():
     parser.add_argument(
         "--max-depth",
         type=float,
-        default=1.0,
+        default=0.8,
         help="Only use points with depth <= max_depth meters when building point clouds for ICP"
     )
     parser.add_argument(
@@ -848,7 +895,7 @@ def create_argument_parser():
     parser.add_argument(
         "--min-fitness",
         type=float,
-        default=0.4,
+        default=0.3,
         help="Minimum fitness score to accept alignment (for robust/multiscale methods)"
     )
     parser.add_argument(

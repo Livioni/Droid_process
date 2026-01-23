@@ -47,10 +47,10 @@ def load_camera_data(camera_dir, frame_idx):
     
     # Load extrinsics - find the extrinsics file
     try:
-        extrinsics_refined_dir = camera_dir / "extrinsics_refined_icp" 
+        extrinsics_refined_dir = camera_dir / "extrinsics_refined" 
         extrinsics_file = glob.glob(os.path.join(extrinsics_refined_dir, '*.npy'))[0]
         extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
-        print(f"Loaded refined extrinsics from {extrinsics_refined_dir}")
+        print(f"Loaded refined extrinsics from {extrinsics_file}")
     except:
         extrinsics_dir = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
         extrinsics = np.load(str(extrinsics_dir))[frame_idx_clone]
@@ -335,9 +335,9 @@ def main():
         "--cameras",
         nargs="+",
         default=[
-            "datasets/samples/Fri_Jul__7_09:42:23_2023/18026681",
-            "datasets/samples/Fri_Jul__7_09:42:23_2023/22008760",
-            "datasets/samples/Fri_Jul__7_09:42:23_2023/24400334",
+            "/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/18026681",
+            "/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/22008760",
+            "/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/24400334",
         ],
         help="List of camera directories"
     )
@@ -356,7 +356,7 @@ def main():
     parser.add_argument(
         "--downsample",
         type=int,
-        default=2,
+        default=10,
         help="Downsample factor for points (default: 1, no downsampling)"
     )
     
