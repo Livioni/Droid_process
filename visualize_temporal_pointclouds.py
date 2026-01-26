@@ -46,18 +46,23 @@ def load_camera_data(camera_dir, frame_idx):
     intrinsics = np.load(str(intrinsics_path))
 
     # Load extrinsics - find the extrinsics file
-    try:
-        extrinsics_refined_dir = camera_dir / "extrinsics_refined" 
-        extrinsics_file = glob.glob(os.path.join(extrinsics_refined_dir, '*.npy'))[0]
+    if os.path.exists(camera_dir / "extrinsics_align" / f"{camera_id}.npy"):
+        extrinsics_file = camera_dir / "extrinsics_align" / f"{camera_id}.npy"
         extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
-        print(f"Loaded refined extrinsics from {extrinsics_refined_dir}")
-    except:
-        extrinsics_dir = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
-        extrinsics = np.load(str(extrinsics_dir))[frame_idx_clone]
-        print(f"Loaded extrinsics from {extrinsics_dir}")
+        print(f"Loaded refined extrinsics from {extrinsics_file}")
+    elif os.path.exists(camera_dir / "extrinsics_refined" / f"{camera_id}.npy"):
+        extrinsics_file = camera_dir / "extrinsics_refined" / f"{camera_id}.npy"
+        extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
+        print(f"Loaded extrinsics from {extrinsics_file}")
+    elif os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
+        extrinsics_file = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
+        extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
+        print(f"Loaded extrinsics from {extrinsics_file}")
+    else:
+        raise FileNotFoundError(f"Extrinsics not found.")
 
     return image, depth, intrinsics, extrinsics
-
+    
 
 def depth_to_pointcloud(depth, intrinsics, image=None, max_depth=10.0):
     """
@@ -377,13 +382,13 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize temporal point clouds for a single camera")
     parser.add_argument(
         "--camera",
-        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/18026681",
+        default="/opt/dlami/nvme/datasets/droid_finished/Fri_Jul__7_18:40:11_2023/18026681",
         help="Camera directory path"
     )
     parser.add_argument(
         "--center-frame",
         type=int,
-        default=5,
+        default=100,
         help="Center frame index (will show frames center-2 to center+2)"
     )
     parser.add_argument(

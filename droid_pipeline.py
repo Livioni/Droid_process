@@ -38,74 +38,6 @@ def setup_logging(log_file: str = "droid_pipeline.log"):
     )
 
 
-def fix_depth_data(depth_file: Path, min_depth: float = 0.1, max_depth: float = 10.0) -> bool:
-    """
-    Fix depth data to prevent CUBLAS errors by replacing problematic values
-
-    Args:
-        depth_file: Path to depth .npz file
-        min_depth: Minimum valid depth value
-        max_depth: Maximum valid depth value
-
-    Returns:
-        bool: True if file was modified, False otherwise
-    """
-    try:
-        # Load depth data
-        with np.load(str(depth_file)) as data:
-            depth = data["depth"]
-            original_depth = depth.copy()
-
-        if depth.ndim == 3 and depth.shape[-1] == 1:
-            depth = depth[..., 0]
-
-        modified = False
-
-        # Replace zeros with small positive values
-        zero_mask = depth == 0
-        if np.any(zero_mask):
-            # Use median of non-zero depths as replacement
-            non_zero_depths = depth[~zero_mask]
-            if len(non_zero_depths) > 0:
-                median_depth = np.median(non_zero_depths)
-                depth[zero_mask] = median_depth
-                modified = True
-
-        # Clamp depth values to valid range
-        if np.any(depth < min_depth):
-            depth[depth < min_depth] = min_depth
-            modified = True
-
-        if np.any(depth > max_depth):
-            depth[depth > max_depth] = max_depth
-            modified = True
-
-        # Handle NaN and Inf values
-        if np.any(np.isnan(depth)) or np.any(np.isinf(depth)):
-            # Replace with median of valid depths
-            valid_mask = ~(np.isnan(depth) | np.isinf(depth))
-            if np.any(valid_mask):
-                median_depth = np.median(depth[valid_mask])
-                depth[np.isnan(depth) | np.isinf(depth)] = median_depth
-                modified = True
-
-        if modified:
-            # Save fixed depth data
-            if original_depth.ndim == 3 and original_depth.shape[-1] == 1:
-                # Keep original format
-                fixed_depth = depth[..., np.newaxis] if depth.ndim == 2 else depth
-            else:
-                fixed_depth = depth
-
-            np.savez_compressed(str(depth_file), depth=fixed_depth.astype(np.float32))
-            return True
-
-    except Exception as e:
-        logging.warning(f"Failed to fix depth file {depth_file}: {e}")
-
-    return False
-
-
 def find_cameras_in_scene(scene_dir: Path) -> Dict[str, List[str]]:
     """
     Identify camera types in a scene by looking for camera identification files
@@ -116,33 +48,19 @@ def find_cameras_in_scene(scene_dir: Path) -> Dict[str, List[str]]:
     """
     cameras = {'wrist': [], 'ext1': [], 'ext2': []}
 
-    # First, check for camera identification files
-    wrist_file = scene_dir / 'wrist_camera.txt'
-    ext1_file = scene_dir / 'ext1.txt'
-    ext2_file = scene_dir / 'ext2.txt'
-
-    if wrist_file.exists():
-        with open(wrist_file, 'r') as f:
-            wrist_id = f.read().strip()
-            if wrist_id:
-                cameras['wrist'].append(wrist_id)
-
-    if ext1_file.exists():
-        with open(ext1_file, 'r') as f:
-            ext1_id = f.read().strip()
-            if ext1_id:
-                cameras['ext1'].append(ext1_id)
-
-    if ext2_file.exists():
-        with open(ext2_file, 'r') as f:
-            ext2_id = f.read().strip()
-            if ext2_id:
-                cameras['ext2'].append(ext2_id)
+    # First, check for camera identification files inside each camera directory
+    camera_dirs = [d for d in scene_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+    for cam_dir in camera_dirs:
+        if (cam_dir / 'wrist_camera.txt').exists():
+            cameras['wrist'].append(cam_dir.name)
+        if (cam_dir / 'ext1.txt').exists():
+            cameras['ext1'].append(cam_dir.name)
+        if (cam_dir / 'ext2.txt').exists():
+            cameras['ext2'].append(cam_dir.name)
 
     # If no identification files found, try to infer from directory structure
     if not any(cameras.values()):
         logging.warning("No camera identification files found, inferring from directory structure")
-        camera_dirs = [d for d in scene_dir.iterdir() if d.is_dir() and d.name.isdigit()]
         if camera_dirs:
             # Sort by ID and assign first as wrist, next two as ext1/ext2
             sorted_cams = sorted([d.name for d in camera_dirs])
@@ -344,6 +262,7 @@ def step_2_mapanything_initialization(
     scene_dir: Path,
     cameras: Dict[str, List[str]],
     log_path: Optional[Path] = None,
+    use_wrist_target: bool = False,
 ) -> Tuple[bool, int]:
     """
     Step 2: MapAnything initialization for left-right camera poses
@@ -362,52 +281,38 @@ def step_2_mapanything_initialization(
     # Use first two external cameras for initialization
     ref_cam_id = ext_cameras[0]
     tgt_cam_id = ext_cameras[1]
+    wrist_cam_id = cameras['wrist'][0] if (use_wrist_target and cameras.get('wrist')) else None
 
     ref_cam_dir = scene_dir / ref_cam_id
     tgt_cam_dir = scene_dir / tgt_cam_id
+    wrist_cam_dir = scene_dir / wrist_cam_id if wrist_cam_id else None
 
     if not ref_cam_dir.exists() or not tgt_cam_dir.exists():
         logging.error(f"Camera directories not found: {ref_cam_dir}, {tgt_cam_dir}")
         return False, 0
+    if wrist_cam_dir is not None and not wrist_cam_dir.exists():
+        logging.warning(f"Wrist camera directory not found: {wrist_cam_dir}")
+        wrist_cam_dir = None
 
     # Check if depth files exist and have reasonable quality
     ref_depth_dir = ref_cam_dir / "depth_npy"
     tgt_depth_dir = tgt_cam_dir / "depth_npy"
+    wrist_depth_dir = wrist_cam_dir / "depth_npy" if wrist_cam_dir is not None else None
 
     if not ref_depth_dir.exists() or not tgt_depth_dir.exists():
         logging.warning("Depth directories not found, skipping MapAnything initialization")
         return True, 0
-
-    # Check depth quality for potential CUBLAS issues
-    try:
-        import numpy as np
-        ref_depth_files = list(ref_depth_dir.glob("*.npz"))
-        tgt_depth_files = list(tgt_depth_dir.glob("*.npz"))
-
-        if ref_depth_files and tgt_depth_files:
-            # Check zero ratio in first frame
-            with np.load(str(ref_depth_files[0])) as data:
-                ref_depth = data["depth"]
-                if ref_depth.ndim == 3 and ref_depth.shape[-1] == 1:
-                    ref_depth = ref_depth[..., 0]
-                ref_zero_ratio = np.sum(ref_depth == 0) / ref_depth.size
-
-            with np.load(str(tgt_depth_files[0])) as data:
-                tgt_depth = data["depth"]
-                if tgt_depth.ndim == 3 and tgt_depth.shape[-1] == 1:
-                    tgt_depth = tgt_depth[..., 0]
-                tgt_zero_ratio = np.sum(tgt_depth == 0) / tgt_depth.size
-
-            if ref_zero_ratio > 0.7 or tgt_zero_ratio > 0.7:
-                logging.warning("Skipping MapAnything initialization due to poor depth quality")
-                return True, 0
-
-    except Exception as e:
-        logging.warning(f"Could not check depth quality: {e}")
+    if wrist_depth_dir is not None and not wrist_depth_dir.exists():
+        logging.warning("Wrist depth directory not found, skipping wrist in MapAnything initialization")
+        wrist_cam_dir = None
 
     # Create output directory
     output_dir = tgt_cam_dir / "extrinsics_refined"
     output_dir.mkdir(exist_ok=True)
+    output_dir2 = None
+    if wrist_cam_dir is not None:
+        output_dir2 = wrist_cam_dir / "extrinsics_refined"
+        output_dir2.mkdir(exist_ok=True)
 
     # Try MapAnything initialization
     cmd = [
@@ -418,12 +323,27 @@ def step_2_mapanything_initialization(
         "--output_dir", str(output_dir),
         "--output_name", f"mapanything.npy"
     ]
+    if wrist_cam_dir is not None:
+        cmd.extend(
+            [
+                "--tgt_cam2",
+                str(wrist_cam_dir),
+                "--output_dir2",
+                str(output_dir2),
+                "--output_name2",
+                "mapanything.npy",
+            ]
+        )
     
     print("cmd: ", cmd)
 
+    desc = f"MapAnything initialization for {ref_cam_id} -> {tgt_cam_id}"
+    if wrist_cam_dir is not None:
+        desc = f"{desc} (+ wrist {wrist_cam_id})"
+
     success, output = run_command(
         cmd,
-        f"MapAnything initialization for {ref_cam_id} -> {tgt_cam_id}",
+        desc,
         conda_env="mapanything",
         log_path=log_path,
     )
@@ -435,12 +355,23 @@ def step_2_mapanything_initialization(
 
     # Check if output file was created
     output_file = output_dir / f"mapanything.npy"
+    output_file2 = output_dir2 / f"mapanything.npy" if output_dir2 is not None else None
+    processed_count = 0
+
     if output_file.exists():
         logging.info(f"MapAnything initialization output: {output_file}")
-        return True, 1
+        processed_count += 1
     else:
-        logging.warning("MapAnything output file not found")
-        return True, 0
+        logging.warning("MapAnything output file not found for target camera")
+
+    if output_file2 is not None:
+        if output_file2.exists():
+            logging.info(f"MapAnything initialization output (wrist): {output_file2}")
+            processed_count += 1
+        else:
+            logging.warning("MapAnything output file not found for wrist camera")
+
+    return True, processed_count
 
 
 def step_3_align_left_right_cameras(
@@ -586,7 +517,7 @@ def step_4_optimize_wrist_camera(
         return False, 0
 
 
-def process_single_scene(scene_dir: Path, depth_method: str) -> bool:
+def process_single_scene(scene_dir: Path, depth_method: str, step2_use_wrist: bool = False) -> bool:
     """
     Process a single scene through the complete pipeline
     """
@@ -634,7 +565,7 @@ def process_single_scene(scene_dir: Path, depth_method: str) -> bool:
     # Step 2: MapAnything initialization
     if success:
         step2_success, step2_processed = step_2_mapanything_initialization(
-            scene_dir, cameras, log_path=command_log_path
+            scene_dir, cameras, log_path=command_log_path, use_wrist_target=step2_use_wrist
         )
         stats['step2_mapanything_processed'] = step2_processed
         if not step2_success:
@@ -703,7 +634,7 @@ def find_all_scenes(data_root: Path) -> List[Path]:
             if has_cameras or has_camera_files:
                 scenes.append(item)
 
-    return sorted(scenes)
+    return scenes
 
 
 def main():
@@ -716,7 +647,8 @@ def main():
                        help='Process all scenes in batch mode')
     parser.add_argument('--log_file', type=str, default='droid_pipeline.log',
                        help='Log file path')
-    parser.add_argument('--skip_existing', action='store_true',
+    parser.add_argument('--skip_existing', default=False,
+                        action='store_true',
                        help='Skip scenes that have already been processed')
     parser.add_argument(
         '--depth_method',
@@ -724,6 +656,12 @@ def main():
         default='mixed',
         choices=['s2m2', 'foundation_stereo', 'mixed'],
         help='Depth method for step 1: mixed (wrist=s2m2, ext=foundation), or single method'
+    )
+    parser.add_argument(
+        '--step2_use_wrist',
+        action='store_true',
+        default=False,
+        help='Use wrist camera as an additional target in step 2 MapAnything (default: off)'
     )
 
     args = parser.parse_args()
@@ -739,7 +677,28 @@ def main():
     if args.scene_id:
         # Process single scene
         scene_dir = data_root / args.scene_id
-        success = process_single_scene(scene_dir, depth_method=args.depth_method)
+        success = process_single_scene(
+            scene_dir,
+            depth_method=args.depth_method,
+            step2_use_wrist=args.step2_use_wrist,
+        )
+        if success:
+            try:
+                completed_log = Path.cwd() / "completed_scenes.txt"
+                with open(completed_log, "a") as f:
+                    f.write(f"{scene_dir}\n")
+            except Exception as e:
+                logging.warning(f"Failed to write completed scene log: {e}")
+
+            # Move completed scene to finished directory
+            try:
+                finished_root = Path("/opt/dlami/nvme/datasets/droid_finished")
+                finished_root.mkdir(parents=True, exist_ok=True)
+                dest_path = finished_root / scene_dir.name
+                shutil.move(str(scene_dir), str(dest_path))
+                logging.info(f"Moved completed scene to: {dest_path}")
+            except Exception as e:
+                logging.warning(f"Failed to move completed scene {scene_dir}: {e}")
         return 0 if success else 1
 
     elif args.batch_process:
@@ -771,8 +730,28 @@ def main():
                     skipped += 1
                     continue
 
-            if process_single_scene(scene_dir, depth_method=args.depth_method):
+            if process_single_scene(
+                scene_dir,
+                depth_method=args.depth_method,
+                step2_use_wrist=args.step2_use_wrist,
+            ):
                 successful += 1
+                try:
+                    completed_log = Path.cwd() / "completed_scenes.txt"
+                    with open(completed_log, "a") as f:
+                        f.write(f"{scene_dir}\n")
+                except Exception as e:
+                    logging.warning(f"Failed to write completed scene log: {e}")
+
+                # Move completed scene to finished directory
+                try:
+                    finished_root = Path("/opt/dlami/nvme/datasets/droid_finished")
+                    finished_root.mkdir(parents=True, exist_ok=True)
+                    dest_path = finished_root / scene_dir.name
+                    shutil.move(str(scene_dir), str(dest_path))
+                    logging.info(f"Moved completed scene to: {dest_path}")
+                except Exception as e:
+                    logging.warning(f"Failed to move completed scene {scene_dir}: {e}")
             else:
                 failed += 1
 
