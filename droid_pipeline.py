@@ -408,8 +408,8 @@ def step_3_align_left_right_cameras(
             "--cam1", str(ref_cam_dir),
             "--cam2", str(tgt_cam_dir),
             "--output-dir", str(output_dir),
-            "--num-frames", "10",
-            "--max-depth", "0.8",
+            "--num-frames", "3",
+            "--max-depth", "1",
             "--method", "robust"
         ]
 

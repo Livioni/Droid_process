@@ -54,7 +54,7 @@ def load_camera_data(camera_dir, frame_idx):
         extrinsics_file = camera_dir / "extrinsics_refined" / f"{camera_id}.npy"
         extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
         print(f"Loaded extrinsics from {extrinsics_file}")
-    elif os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
+    if os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
         extrinsics_file = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
         extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
         print(f"Loaded extrinsics from {extrinsics_file}")
@@ -382,7 +382,7 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize temporal point clouds for a single camera")
     parser.add_argument(
         "--camera",
-        default="/opt/dlami/nvme/datasets/droid_finished/Fri_Jul__7_18:40:11_2023/18026681",
+        default="/opt/dlami/nvme/datasets/droid_finished/Fri_Jul_14_15:59:25_2023/18026681",
         help="Camera directory path"
     )
     parser.add_argument(

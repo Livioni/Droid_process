@@ -18,6 +18,7 @@ hight_conf/
 /processed_droid
 batch_processing.log
 droid_pipeline.log
+completed_scenes.txt
 
 # Distribution / packaging
 workspace/

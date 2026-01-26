@@ -126,7 +126,7 @@ class StaticCameraAligner:
     def align_single_frame(self, frame_idx, max_iterations=50, distance_threshold=0.05,
                           voxel_size=0.01, max_depth=1.0, visualize=False):
         """
-        Align camera 2 to camera 1 for a single frame using ICP.
+        Align camera 2 to camera 1 for a single frame using iterative ICP.
         
         Args:
             frame_idx: Frame index to align
@@ -165,54 +165,91 @@ class StaticCameraAligner:
         T1 = np.eye(4)
         T1[:3, :] = ext1
         
-        T2 = np.eye(4)
-        T2[:3, :] = ext2
-        
-        # Transform camera coordinates to world coordinates
-        points_3d_world1 = self._transform_points(points_3d_cam1, T1)
-        points_3d_world2 = self._transform_points(points_3d_cam2, T2)
-        
-        # Convert to Open3D point clouds
-        source_pcd = o3d.geometry.PointCloud()
-        source_pcd.points = o3d.utility.Vector3dVector(points_3d_world2)
-        
-        target_pcd = o3d.geometry.PointCloud()
-        target_pcd.points = o3d.utility.Vector3dVector(points_3d_world1)
-        
-        # Downsample for efficiency
-        source_pcd = source_pcd.voxel_down_sample(voxel_size)
-        target_pcd = target_pcd.voxel_down_sample(voxel_size)
-        
-        print(f"  After downsampling - Source: {len(source_pcd.points)}, Target: {len(target_pcd.points)}")
-        
-        # Estimate normals for better ICP
-        source_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
-        target_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
-        
-        # Run ICP - align source (cam2) to target (cam1)
-        init_transform = np.eye(4)
-        
-        # Use point-to-plane ICP for better convergence
-        reg_result = o3d.pipelines.registration.registration_icp(
-            source_pcd, target_pcd, distance_threshold, init_transform,
-            o3d.pipelines.registration.TransformationEstimationPointToPlane(),
-            o3d.pipelines.registration.ICPConvergenceCriteria(
-                max_iteration=max_iterations,
-                relative_fitness=1e-6,
-                relative_rmse=1e-6
+        T2_original = np.eye(4)
+        T2_original[:3, :] = ext2
+        T2_current = T2_original.copy()
+
+        num_icp_rounds = 3
+        final_fitness = 0.0
+        final_rmse = float('inf')
+        last_source_pcd = None
+        last_target_pcd = None
+        last_delta = None
+
+        for iter_idx in range(num_icp_rounds):
+            # Transform camera coordinates to world coordinates
+            points_3d_world1 = self._transform_points(points_3d_cam1, T1)
+            points_3d_world2 = self._transform_points(points_3d_cam2, T2_current)
+
+            # Recompute co-visible point clouds using current cam2 pose
+            covis_world2 = self._filter_points_visible_in_camera(
+                points_3d_world2, depth1, self.K1, T1, depth_threshold=distance_threshold
             )
-        )
-        
-        print(f"  ICP fitness: {reg_result.fitness:.4f}, RMSE: {reg_result.inlier_rmse:.4f}")
-        
-        # The transformation aligns camera 2 world points to camera 1 world points
-        T_align = reg_result.transformation
-        
-        # Visualize if requested
-        if visualize:
-            self.visualize_point_clouds(source_pcd, target_pcd, T_align, frame_idx)
-        
-        return T_align, reg_result.fitness, reg_result.inlier_rmse
+            covis_world1 = self._filter_points_visible_in_camera(
+                points_3d_world1, depth2, self.K2, T2_current, depth_threshold=distance_threshold
+            )
+
+            print(
+                f"  Iter {iter_idx + 1}/{num_icp_rounds} - "
+                f"Co-visible points: cam2->cam1 {len(covis_world2)}, cam1->cam2 {len(covis_world1)}"
+            )
+
+            if len(covis_world1) < 100 or len(covis_world2) < 100:
+                print(f"  Insufficient co-visible points at iter {iter_idx + 1}, stopping.")
+                if iter_idx == 0:
+                    return None, 0.0, float('inf')
+                break
+
+            # Convert to Open3D point clouds
+            source_pcd = o3d.geometry.PointCloud()
+            source_pcd.points = o3d.utility.Vector3dVector(covis_world2)
+
+            target_pcd = o3d.geometry.PointCloud()
+            target_pcd.points = o3d.utility.Vector3dVector(covis_world1)
+
+            # Downsample for efficiency
+            source_pcd = source_pcd.voxel_down_sample(voxel_size)
+            target_pcd = target_pcd.voxel_down_sample(voxel_size)
+
+            print(f"  After downsampling - Source: {len(source_pcd.points)}, Target: {len(target_pcd.points)}")
+
+            # Estimate normals for better ICP
+            source_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
+            target_pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.05, max_nn=30))
+
+            # Run ICP - align source (cam2) to target (cam1)
+            init_transform = np.eye(4)
+
+            # Use point-to-plane ICP for better convergence
+            reg_result = o3d.pipelines.registration.registration_icp(
+                source_pcd, target_pcd, distance_threshold, init_transform,
+                o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                o3d.pipelines.registration.ICPConvergenceCriteria(
+                    max_iteration=max_iterations,
+                    relative_fitness=1e-6,
+                    relative_rmse=1e-6
+                )
+            )
+
+            print(f"  ICP iter {iter_idx + 1}: fitness={reg_result.fitness:.4f}, RMSE={reg_result.inlier_rmse:.4f}")
+
+            # Update cam2 pose and accumulate total alignment
+            T_delta = reg_result.transformation
+            T2_current = T_delta @ T2_current
+            final_fitness = reg_result.fitness
+            final_rmse = reg_result.inlier_rmse
+            last_source_pcd = source_pcd
+            last_target_pcd = target_pcd
+            last_delta = T_delta
+
+        # Total transformation aligns original cam2 world points to cam1 world points
+        T_align = T2_current @ np.linalg.inv(T2_original)
+
+        # Visualize if requested (use last iteration's point clouds)
+        if visualize and last_source_pcd is not None:
+            self.visualize_point_clouds(last_source_pcd, last_target_pcd, last_delta, frame_idx)
+
+        return T_align, final_fitness, final_rmse
 
     def align_single_frame_robust(self, frame_idx, max_iterations=50, distance_threshold=0.05,
                                 voxel_size=0.01, max_depth=10.0, visualize=False,
@@ -450,6 +487,68 @@ class StaticCameraAligner:
         points_homogeneous = np.column_stack([points, np.ones(len(points))])
         points_transformed = (T @ points_homogeneous.T).T
         return points_transformed[:, :3]
+
+    def _filter_points_visible_in_camera(self, points_world, depth_map, K, T_cam_world,
+                                         depth_threshold=0.05):
+        """
+        Filter world points to keep only those visible in a target camera given its depth map.
+
+        Args:
+            points_world: Nx3 array of 3D points in world coordinates
+            depth_map: HxW depth map for the target camera
+            K: 3x3 intrinsics for the target camera
+            T_cam_world: 4x4 transform from camera to world
+            depth_threshold: Depth consistency threshold (meters)
+
+        Returns:
+            filtered_points_world: Mx3 array of visible points in world coordinates
+        """
+        if len(points_world) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        H, W = depth_map.shape
+        T_world_cam = np.linalg.inv(T_cam_world)
+        points_cam = self._transform_points(points_world, T_world_cam)
+
+        # Filter points in front of camera
+        valid_front = points_cam[:, 2] > 0
+        points_cam_front = points_cam[valid_front]
+        points_world_front = points_world[valid_front]
+
+        if len(points_cam_front) == 0:
+            return np.empty((0, 3), dtype=np.float32)
+
+        fx, fy = K[0, 0], K[1, 1]
+        cx, cy = K[0, 2], K[1, 2]
+
+        X = points_cam_front[:, 0]
+        Y = points_cam_front[:, 1]
+        Z = points_cam_front[:, 2]
+
+        u_coords = fx * X / Z + cx
+        v_coords = fy * Y / Z + cy
+
+        u_int = np.round(u_coords).astype(int)
+        v_int = np.round(v_coords).astype(int)
+
+        valid_bounds = (u_int >= 0) & (u_int < W) & (v_int >= 0) & (v_int < H)
+        if not np.any(valid_bounds):
+            return np.empty((0, 3), dtype=np.float32)
+
+        u_valid = u_int[valid_bounds]
+        v_valid = v_int[valid_bounds]
+        z_valid = Z[valid_bounds]
+        points_world_valid = points_world_front[valid_bounds]
+
+        depth_gt = depth_map[v_valid, u_valid]
+        valid_depth = (depth_gt > 0) & (~np.isnan(depth_gt))
+        if not np.any(valid_depth):
+            return np.empty((0, 3), dtype=np.float32)
+
+        depth_diff = np.abs(z_valid - depth_gt)
+        visible_mask = valid_depth & (depth_diff < depth_threshold)
+
+        return points_world_valid[visible_mask]
 
     def align_cameras_robust(self, num_frames=10, max_iterations=50, distance_threshold=0.05,
                             voxel_size=0.01, max_depth=10.0, visualize=False,
