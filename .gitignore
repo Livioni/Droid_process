@@ -19,6 +19,11 @@ hight_conf/
 batch_processing.log
 droid_pipeline.log
 completed_scenes.txt
+*.run
+/logs
+/FoundationStereo
+/map-anything
+/mast3r
 
 # Distribution / packaging
 workspace/

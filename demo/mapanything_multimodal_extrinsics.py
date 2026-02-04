@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 """
-Use MapAnything Multi-Modal Inference to estimate relative camera pose between two or three views,
-then save the target view(s) cam2world extrinsics expanded to [N, 3, 4] for the whole sequence.
+Use MapAnything to estimate cam2world poses for all frames in a single camera directory.
 
-This script is tailored for the s2m2 "droid" dataset layout:
-  {camera_dir}/images/left/000000.png
-  {camera_dir}/depth_npy/000000.npz   (expects key: "depth", in meters)
+This script processes all images in the camera directory and estimates poses for each frame.
+Expected layout:
+  {camera_dir}/images/left/XXXXXX.png
+  {camera_dir}/depth_npy/XXXXXX.npz   (expects key: "depth", in meters)
   {camera_dir}/intrinsics/{camera_id}_left.npy   (3x3)
 
 Example:
   python demo/mapanything_multimodal_extrinsics.py \
-    --ref_cam /mnt/disk3.8-5/phs_github/s2m2/datasets/samples/Fri_Jul__7_09:42:23_2023/22008760 \
-    --tgt_cam /mnt/disk3.8-5/phs_github/s2m2/datasets/samples/Fri_Jul__7_09:42:23_2023/24400334 \
-    --tgt_cam2 /mnt/disk3.8-5/phs_github/s2m2/datasets/samples/Fri_Jul__7_09:42:23_2023/25410312 \
-    --frame 0 \
-    --output_dir /mnt/disk3.8-5/phs_github/s2m2/datasets/samples/Fri_Jul__7_09:42:23_2023/24400334/extrinsics_refined \
-    --output_name 24400334.npy \
-    --output_dir2 /mnt/disk3.8-5/phs_github/s2m2/datasets/samples/Fri_Jul__7_09:42:23_2023/25410312/extrinsics_refined \
-    --output_name2 25410312.npy
+    --camera_dir datasets/droid_wrist/Fri_Apr_21_17:11:41_2023/17368348 \
+    --output_dir datasets/droid_wrist/Fri_Apr_21_17:11:41_2023/17368348/poses_ma \
+    --output_name poses.npy
 """
 
 from __future__ import annotations
@@ -77,19 +72,19 @@ def _load_rgb_uint8(image_path: Path) -> np.ndarray:
     return arr
 
 
-def _load_depth_meters(depth_npz_path: Path) -> np.ndarray:
-    with np.load(str(depth_npz_path)) as data:
-        if "depth" not in data:
-            raise KeyError(
-                f"{depth_npz_path} missing key 'depth'. Available keys: {list(data.keys())}"
-            )
-        depth = data["depth"]
-    if depth.ndim == 3 and depth.shape[-1] == 1:
-        depth = depth[..., 0]
+def _load_depth_meters(depth_path: Path) -> np.ndarray:
+    """Load depth from PNG file (assuming depth in millimeters, convert to meters)."""
+    from PIL import Image
+
+    img = Image.open(str(depth_path))
+    depth = np.array(img, dtype=np.float32)
+
     if depth.ndim != 2:
-        raise ValueError(f"Expected depth (H,W), got {depth.shape} from {depth_npz_path}")
-    if depth.dtype == np.float16:
-        depth = depth.astype(np.float32)
+        raise ValueError(f"Expected depth (H,W), got {depth.shape} from {depth_path}")
+
+    # Convert from millimeters to meters (assuming depth is in mm)
+    depth = depth / 1000.0
+
     return depth
 
 
@@ -105,7 +100,7 @@ def _load_intrinsics(intrinsics_path: Path) -> np.ndarray:
 def _paths_for_frame(cam_dir: Path, frame_idx: int) -> Tuple[Path, Path, Path]:
     cam_id = cam_dir.name
     img_path = cam_dir / "images" / "left" / f"{frame_idx:06d}.png"
-    depth_path = cam_dir / "depth_npy" / f"{frame_idx:06d}.npz"
+    depth_path = cam_dir / "depth_npy" / f"{frame_idx:06d}_depth.png"
     K_path = cam_dir / "intrinsics" / f"{cam_id}_left.npy"
     return img_path, depth_path, K_path
 
@@ -115,6 +110,41 @@ def _count_left_images(cam_dir: Path) -> int:
     if not left_dir.exists():
         raise FileNotFoundError(f"Missing folder: {left_dir}")
     return len(sorted(left_dir.glob("*.png")))
+
+
+def _get_all_frame_indices(cam_dir: Path) -> list[int]:
+    """Get all frame indices that have both image and depth files."""
+    left_dir = cam_dir / "images" / "left"
+    depth_dir = cam_dir / "depth_npy"
+
+    if not left_dir.exists():
+        raise FileNotFoundError(f"Missing folder: {left_dir}")
+    if not depth_dir.exists():
+        raise FileNotFoundError(f"Missing folder: {depth_dir}")
+
+    # Get frame indices from images
+    image_frames = set()
+    for img_path in left_dir.glob("*.png"):
+        try:
+            frame_idx = int(img_path.stem)
+            image_frames.add(frame_idx)
+        except ValueError:
+            continue
+
+    # Get frame indices from depth files
+    depth_frames = set()
+    for depth_path in depth_dir.glob("*_depth.png"):
+        try:
+            # Extract frame index from filename like "000050_depth.png"
+            stem = depth_path.stem  # "000050_depth"
+            frame_idx = int(stem.split('_')[0])  # "000050"
+            depth_frames.add(frame_idx)
+        except (ValueError, IndexError):
+            continue
+
+    # Return frames that have both image and depth
+    valid_frames = sorted(image_frames & depth_frames)
+    return valid_frames
 
 
 def _depth_to_colored_points_cam(
@@ -243,31 +273,13 @@ def _load_cam2world_extrinsics_for_frame(cam_dir: Path, frame_idx: int) -> np.nd
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Estimate target cam2world extrinsics via MapAnything multi-modal inference (2-3 views)."
+        description="Estimate cam2world poses for all frames in a camera directory via MapAnything."
     )
     parser.add_argument(
-        "--ref_cam",
+        "--camera_dir",
         type=str,
-        required=True,
-        help="Reference camera directory (world frame will be normalized to this view).",
-    )
-    parser.add_argument(
-        "--tgt_cam",
-        type=str,
-        required=True,
-        help="Target camera directory (we will save its cam2world extrinsics).",
-    )
-    parser.add_argument(
-        "--tgt_cam2",
-        type=str,
-        default=None,
-        help="Optional second target camera directory (also saved, aligned to ref_cam).",
-    )
-    parser.add_argument(
-        "--frame",
-        type=int,
-        default=0,
-        help="Frame index to use (default: 0).",
+        default="datasets/droid_wrist/Fri_Apr_21_17:15:10_2023/17368348",
+        help="Camera directory containing images/left/, depth_npy/, and intrinsics/ folders.",
     )
     parser.add_argument(
         "--model_name",
@@ -285,25 +297,13 @@ def main() -> None:
         "--output_dir",
         type=str,
         default=None,
-        help="Output directory for tgt_cam (default: {tgt_cam}/extrinsics).",
+        help="Output directory for poses (default: {camera_dir}/poses_ma).",
     )
     parser.add_argument(
         "--output_name",
         type=str,
-        default=None,
-        help="Output filename inside output_dir (default: {tgt_cam_id}_ma.npy).",
-    )
-    parser.add_argument(
-        "--output_dir2",
-        type=str,
-        default=None,
-        help="Output directory for tgt_cam2 (default: {tgt_cam2}/extrinsics).",
-    )
-    parser.add_argument(
-        "--output_name2",
-        type=str,
-        default=None,
-        help="Output filename for tgt_cam2 (default: {tgt_cam2_id}_ma.npy).",
+        default="poses.npy",
+        help="Output filename (default: poses.npy).",
     )
     parser.add_argument(
         "--overwrite",
@@ -318,67 +318,28 @@ def main() -> None:
         choices=["bf16", "fp16", "fp32"],
         help="AMP dtype (default: bf16). Use fp32 if bf16 unsupported on your GPU/CPU.",
     )
-    parser.add_argument(
-        "--save_ply",
-        action="store_true",
-        default=False,
-        help="Also save a fused colored point cloud PLY (ref + tgt) in the original world frame.",
-    )
-    parser.add_argument(
-        "--ply_path",
-        type=str,
-        default=None,
-        help="PLY output path (default: {output_dir}/{output_name with .ply}).",
-    )
-    parser.add_argument(
-        "--ply_stride",
-        type=int,
-        default=3,
-        help="Subsampling stride for point cloud generation (default: 3).",
-    )
-    parser.add_argument(
-        "--ply_max_depth",
-        type=float,
-        default=10.0,
-        help="Max depth (meters) for point cloud filtering (default: 10.0).",
-    )
     args = parser.parse_args()
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-    ref_cam = Path(args.ref_cam)
-    tgt_cam = Path(args.tgt_cam)
-    tgt_cam2 = Path(args.tgt_cam2) if args.tgt_cam2 else None
-    if not ref_cam.exists():
-        raise FileNotFoundError(f"ref_cam not found: {ref_cam}")
-    if not tgt_cam.exists():
-        raise FileNotFoundError(f"tgt_cam not found: {tgt_cam}")
-    if tgt_cam2 is not None and not tgt_cam2.exists():
-        raise FileNotFoundError(f"tgt_cam2 not found: {tgt_cam2}")
+    camera_dir = Path(args.camera_dir)
+    if not camera_dir.exists():
+        raise FileNotFoundError(f"Camera directory not found: {camera_dir}")
 
-    out_dir = Path(args.output_dir) if args.output_dir else (tgt_cam / "extrinsics")
+    # Get all frame indices
+    frame_indices = _get_all_frame_indices(camera_dir)
+    if not frame_indices:
+        raise ValueError(f"No valid image frames found in {camera_dir}/images/left/")
+
+    print(f"Found {len(frame_indices)} frames: {frame_indices[0]} to {frame_indices[-1]}")
+
+    out_dir = Path(args.output_dir) if args.output_dir else (camera_dir / "poses_ma")
     out_dir.mkdir(parents=True, exist_ok=True)
-    tgt_id = tgt_cam.name
-    out_name = args.output_name if args.output_name else f"{tgt_id}_ma.npy"
-    out_path = out_dir / out_name
+    out_path = out_dir / args.output_name
     if out_path.exists() and not args.overwrite:
         raise FileExistsError(
             f"Output already exists: {out_path}. Use --overwrite or change --output_name."
         )
-
-    out_dir2 = None
-    out_path2 = None
-    tgt2_id = None
-    if tgt_cam2 is not None:
-        out_dir2 = Path(args.output_dir2) if args.output_dir2 else (tgt_cam2 / "extrinsics")
-        out_dir2.mkdir(parents=True, exist_ok=True)
-        tgt2_id = tgt_cam2.name
-        out_name2 = args.output_name2 if args.output_name2 else f"{tgt2_id}_ma.npy"
-        out_path2 = out_dir2 / out_name2
-        if out_path2.exists() and not args.overwrite:
-            raise FileExistsError(
-                f"Output already exists: {out_path2}. Use --overwrite or change --output_name2."
-            )
 
     # Resolve device
     if args.device is None:
@@ -386,45 +347,63 @@ def main() -> None:
     else:
         device = args.device
 
-    # Load inputs
-    ref_img_path, ref_depth_path, ref_K_path = _paths_for_frame(ref_cam, args.frame)
-    tgt_img_path, tgt_depth_path, tgt_K_path = _paths_for_frame(tgt_cam, args.frame)
-    tgt2_img_path = tgt2_depth_path = tgt2_K_path = None
-    if tgt_cam2 is not None:
-        tgt2_img_path, tgt2_depth_path, tgt2_K_path = _paths_for_frame(tgt_cam2, args.frame)
+    # Load reference frame (first frame)
+    ref_frame = frame_indices[0]
+    ref_img_path, ref_depth_path, ref_K_path = _paths_for_frame(camera_dir, ref_frame)
 
-    required_paths = [ref_img_path, ref_depth_path, ref_K_path, tgt_img_path, tgt_depth_path, tgt_K_path]
-    if tgt_cam2 is not None:
-        required_paths.extend([tgt2_img_path, tgt2_depth_path, tgt2_K_path])
-
-    for p in required_paths:
-        if not p.exists():
-            raise FileNotFoundError(f"Missing required file: {p}")
+    if not ref_img_path.exists() or not ref_depth_path.exists() or not ref_K_path.exists():
+        raise FileNotFoundError(f"Missing required files for reference frame {ref_frame}")
 
     ref_img = _load_rgb_uint8(ref_img_path)
-    tgt_img = _load_rgb_uint8(tgt_img_path)
     ref_depth = _load_depth_meters(ref_depth_path)
-    tgt_depth = _load_depth_meters(tgt_depth_path)
     ref_K = _load_intrinsics(ref_K_path)
-    tgt_K = _load_intrinsics(tgt_K_path)
-    tgt2_img = tgt2_depth = tgt2_K = None
-    if tgt_cam2 is not None:
-        tgt2_img = _load_rgb_uint8(tgt2_img_path)
-        tgt2_depth = _load_depth_meters(tgt2_depth_path)
-        tgt2_K = _load_intrinsics(tgt2_K_path)
 
-    # Prepare multi-modal views (depth is metric, so set is_metric_scale=True)
-    # Note: preprocess_inputs will resize/crop images and will also resize depth & update intrinsics accordingly.
+    # Initialize poses array
+    poses = []  # Will store [N, 3, 4] extrinsics for each frame
+
+    # Set reference frame pose as identity (cam2world)
+    ref_pose_3x4 = np.eye(3, 4, dtype=np.float32)
+    poses.append(ref_pose_3x4)
+
+    # Load all frames at once
+    print(f"Loading {len(frame_indices)} frames...")
+    all_images = []
+    all_depths = []
+
+    for frame_idx in frame_indices:
+        img_path, depth_path, _ = _paths_for_frame(camera_dir, frame_idx)
+
+        if not img_path.exists() or not depth_path.exists():
+            print(f"Warning: Missing files for frame {frame_idx}, skipping")
+            all_images.append(None)
+            all_depths.append(None)
+            continue
+
+        img = _load_rgb_uint8(img_path)
+        depth = _load_depth_meters(depth_path)
+        all_images.append(img)
+        all_depths.append(depth)
+
+    # Prepare all views for MapAnything
     is_metric = torch.tensor([True])
-    views = [
-        {"img": ref_img, "intrinsics": ref_K, "depth_z": ref_depth, "is_metric_scale": is_metric},
-        {"img": tgt_img, "intrinsics": tgt_K, "depth_z": tgt_depth, "is_metric_scale": is_metric},
-    ]
-    if tgt_cam2 is not None:
-        views.append(
-            {"img": tgt2_img, "intrinsics": tgt2_K, "depth_z": tgt2_depth, "is_metric_scale": is_metric}
-        )
-    processed_views = preprocess_inputs(views)
+    views = []
+
+    for i, frame_idx in enumerate(frame_indices):
+        if all_images[i] is None or all_depths[i] is None:
+            continue
+
+        view = {
+            "img": all_images[i],
+            "intrinsics": ref_K,  # Use the same intrinsics for all frames
+            "depth_z": all_depths[i],
+            "is_metric_scale": is_metric
+        }
+        views.append(view)
+
+    if not views:
+        raise ValueError("No valid frames to process")
+
+    print(f"Processing {len(views)} views with MapAnything...")
 
     # Init model
     model = MapAnything.from_pretrained(args.model_name).to(device)
@@ -432,10 +411,13 @@ def main() -> None:
 
     use_amp = device.startswith("cuda") and args.amp_dtype in ("bf16", "fp16")
 
+    # Process all views at once
+    processed_views = preprocess_inputs(views)
+
     with torch.no_grad():
         preds = model.infer(
             processed_views,
-            memory_efficient_inference=False,
+            memory_efficient_inference=True,
             use_amp=use_amp,
             amp_dtype=args.amp_dtype,
             apply_mask=False,
@@ -449,125 +431,42 @@ def main() -> None:
             ignore_pose_scale_inputs=False,
         )
 
-    expected_preds = 3 if tgt_cam2 is not None else 2
-    if len(preds) != expected_preds:
-        raise RuntimeError(f"Expected {expected_preds} predictions, got {len(preds)}")
+    # Extract poses from predictions
+    # Note: MapAnything returns poses in some world frame, we need to normalize them
+    if len(preds) != len(views):
+        raise RuntimeError(f"Expected {len(views)} predictions, got {len(preds)}")
 
-    # Extract cam2world poses (OpenCV convention) and normalize so that ref pose becomes identity.
-    pose_ref = preds[0]["camera_poses"][0]  # (4,4)
-    pose_tgt = preds[1]["camera_poses"][0]  # (4,4)
-    pose_tgt2 = preds[2]["camera_poses"][0] if tgt_cam2 is not None else None  # (4,4)
+    # Get all camera poses
+    all_camera_poses = []
+    for pred in preds:
+        pose_4x4 = pred["camera_poses"][0]  # (4,4) pose
+        all_camera_poses.append(pose_4x4)
 
-    if pose_ref.shape != (4, 4) or pose_tgt.shape != (4, 4):
-        raise RuntimeError(
-            f"Unexpected pose shapes: ref={tuple(pose_ref.shape)}, tgt={tuple(pose_tgt.shape)}"
-        )
-    if pose_tgt2 is not None and pose_tgt2.shape != (4, 4):
-        raise RuntimeError(f"Unexpected pose shape for tgt2: {tuple(pose_tgt2.shape)}")
+    # Normalize poses so that the first pose becomes identity
+    ref_pose = all_camera_poses[0]
+    ref_pose_inv = torch.linalg.inv(ref_pose)
 
-    # Compute relative transform in the reference camera coordinate frame:
-    # pose_rel = inv(pose_ref_pred) @ pose_tgt_pred
-    # This makes pose_ref_rel = I, and pose_tgt_rel maps target-cam -> ref-cam.
-    pose_ref_inv = torch.linalg.inv(pose_ref)
-    pose_tgt_rel = pose_ref_inv @ pose_tgt
-    pose_tgt2_rel = pose_ref_inv @ pose_tgt2 if pose_tgt2 is not None else None
+    for i, pose in enumerate(all_camera_poses):
+        # Transform to reference frame
+        normalized_pose = ref_pose_inv @ pose
+        # Convert to 3x4 extrinsics (cam2world)
+        ext_3x4 = normalized_pose[:3, :].detach().cpu().numpy().astype(np.float32)
+        poses.append(ext_3x4)
 
-    # Lift relative pose into the dataset's original world frame using the dataset-provided
-    # reference camera cam2world extrinsics at the same frame:
-    #   T_tgt_world = T_ref_world_dataset @ T_tgt_rel
-    ref_ext_3x4 = _load_cam2world_extrinsics_for_frame(ref_cam, args.frame)
-    T_ref_world = np.eye(4, dtype=np.float32)
-    T_ref_world[:3, :] = ref_ext_3x4
+    # Convert poses list to numpy array
+    poses_array = np.array(poses, dtype=np.float32)  # Shape: [N, 3, 4]
 
-    T_tgt_rel = pose_tgt_rel.detach().cpu().numpy().astype(np.float32)
-    T_tgt_world = T_ref_world @ T_tgt_rel
-    ext_3x4 = T_tgt_world[:3, :].astype(np.float32, copy=False)
-    if pose_tgt2_rel is not None:
-        T_tgt2_rel = pose_tgt2_rel.detach().cpu().numpy().astype(np.float32)
-        T_tgt2_world = T_ref_world @ T_tgt2_rel
-        ext2_3x4 = T_tgt2_world[:3, :].astype(np.float32, copy=False)
+    # Save poses
+    np.save(str(out_path), poses_array)
 
-    # Save as [N, 3, 4] (camera-to-world extrinsics) expanded to the target sequence length.
-    N = _count_left_images(tgt_cam)
-    ext_all = np.repeat(ext_3x4[None, :, :], N, axis=0)
-
-    np.save(str(out_path), ext_all)
-    ext2_all = None
-    if tgt_cam2 is not None:
-        N2 = _count_left_images(tgt_cam2)
-        ext2_all = np.repeat(ext2_3x4[None, :, :], N2, axis=0)
-        np.save(str(out_path2), ext2_all)
-
-    ply_path = None
-    if args.save_ply:
-        if args.ply_path is not None:
-            ply_path = Path(args.ply_path)
-        else:
-            stem = out_path.name
-            if stem.lower().endswith(".npy"):
-                stem = stem[:-4]
-            ply_path = out_dir / f"{stem}.ply"
-
-        # Build fused point cloud using ORIGINAL (non-cropped) RGB/depth/K and ORIGINAL world extrinsics
-        # Ref: dataset extrinsics; Tgt: predicted T_tgt_world (and T_tgt2_world if provided)
-        T_ref_world_4x4 = T_ref_world
-        T_tgt_world_4x4 = T_tgt_world
-        T_tgt2_world_4x4 = T_tgt2_world if tgt_cam2 is not None else None
-
-        pts_ref_cam, col_ref = _depth_to_colored_points_cam(
-            ref_depth,
-            ref_img,
-            ref_K,
-            stride=args.ply_stride,
-            max_depth_m=args.ply_max_depth,
-        )
-        pts_tgt_cam, col_tgt = _depth_to_colored_points_cam(
-            tgt_depth,
-            tgt_img,
-            tgt_K,
-            stride=args.ply_stride,
-            max_depth_m=args.ply_max_depth,
-        )
-
-        pts_ref_world = _transform_points_cam2world(pts_ref_cam, T_ref_world_4x4)
-        pts_tgt_world = _transform_points_cam2world(pts_tgt_cam, T_tgt_world_4x4)
-        pts_tgt2_world = None
-        col_tgt2 = None
-        if tgt_cam2 is not None:
-            pts_tgt2_cam, col_tgt2 = _depth_to_colored_points_cam(
-                tgt2_depth,
-                tgt2_img,
-                tgt2_K,
-                stride=args.ply_stride,
-                max_depth_m=args.ply_max_depth,
-            )
-            pts_tgt2_world = _transform_points_cam2world(pts_tgt2_cam, T_tgt2_world_4x4)
-
-        if pts_tgt2_world is not None:
-            pts_world = np.concatenate([pts_ref_world, pts_tgt_world, pts_tgt2_world], axis=0)
-            cols = np.concatenate([col_ref, col_tgt, col_tgt2], axis=0)
-        else:
-            pts_world = np.concatenate([pts_ref_world, pts_tgt_world], axis=0)
-            cols = np.concatenate([col_ref, col_tgt], axis=0)
-
-        _write_ply_xyzrgb(ply_path, pts_world, cols)
 
     print("=" * 80)
-    print("MapAnything multi-modal pose estimation complete")
-    print(f"ref_cam: {ref_cam}")
-    print(f"tgt_cam: {tgt_cam}")
-    if tgt_cam2 is not None:
-        print(f"tgt_cam2:{tgt_cam2}")
-    print(f"frame:   {args.frame:06d}")
-    print(f"device:  {device} (use_amp={use_amp}, amp_dtype={args.amp_dtype})")
-    print(f"saved:   {out_path}")
-    if out_path2 is not None:
-        print(f"saved:   {out_path2}")
-    if ply_path is not None:
-        print(f"saved:   {ply_path}")
-    print(f"shape:   {ext_all.shape}  (expected: [N,3,4], N={N})")
-    if ext2_all is not None:
-        print(f"shape:   {ext2_all.shape}  (expected: [N,3,4], N={N2})")
+    print("MapAnything pose estimation complete")
+    print(f"camera_dir: {camera_dir}")
+    print(f"frames:     {len(frame_indices)} ({frame_indices[0]} to {frame_indices[-1]})")
+    print(f"device:     {device} (use_amp={use_amp}, amp_dtype={args.amp_dtype})")
+    print(f"saved:      {out_path}")
+    print(f"shape:      {poses_array.shape} (expected: [N,3,4], N={len(frame_indices)})")
     print("=" * 80)
 
 

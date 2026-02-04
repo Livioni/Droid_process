@@ -32,12 +32,17 @@ def load_camera_data(camera_dir, frame_idx):
 
     # Load depth
     try:
-        depth_backprojected_path = camera_dir / "depth_backproject" / f"{frame_idx}.npz"
-        depth = np.load(str(depth_backprojected_path))["depth"]
-        print(f"Loaded backprojected depth from {depth_backprojected_path}")
+        depth_path = camera_dir / "depth_npy" / f"{frame_idx}_depth.png"
+        depth = cv2.imread(str(depth_path), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0
+        print(f"Loaded depth from {depth_path}")
     except:
-        depth_path = camera_dir / "depth_npy" / f"{frame_idx}.npz"
-        depth = np.load(str(depth_path))["depth"]
+        try:
+            depth_backprojected_path = camera_dir / "depth_backproject" / f"{frame_idx}.npz"
+            depth = np.load(str(depth_backprojected_path))["depth"]
+            print(f"Loaded backprojected depth from {depth_backprojected_path}")
+        except:
+            depth_path = camera_dir / "depth_npy" / f"{frame_idx}.npz"
+            depth = np.load(str(depth_path))["depth"]
 
     # Load intrinsics
     intrinsics_path = camera_dir / "intrinsics" / f"{camera_id}_left.npy"
@@ -46,7 +51,11 @@ def load_camera_data(camera_dir, frame_idx):
     intrinsics = np.load(str(intrinsics_path))
 
     # Load extrinsics - find the extrinsics file
-    if os.path.exists(camera_dir / "extrinsics_align" / f"{camera_id}.npy"):
+    if os.path.exists(camera_dir / "poses_ma" / "poses.npy"):
+        extrinsics_file = camera_dir / "poses_ma" / f"poses.npy"
+        extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
+        print(f"Loaded refined extrinsics from {extrinsics_file}")
+    elif os.path.exists(camera_dir / "extrinsics_align" / f"{camera_id}.npy"):
         extrinsics_file = camera_dir / "extrinsics_align" / f"{camera_id}.npy"
         extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
         print(f"Loaded refined extrinsics from {extrinsics_file}")
@@ -382,7 +391,7 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize temporal point clouds for a single camera")
     parser.add_argument(
         "--camera",
-        default="/opt/dlami/nvme/datasets/droid_finished/Fri_Jul_14_15:59:25_2023/18026681",
+        default="datasets/droid_wrist/Fri_Apr_21_17:11:41_2023/17368348",
         help="Camera directory path"
     )
     parser.add_argument(

@@ -936,23 +936,23 @@ def create_argument_parser():
     )
     parser.add_argument(
         "--cam1",
-        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/22008760",
+        default="/opt/dlami/nvme/datasets/droid_finished/Sat_Jun__3_00:23:48_2023/20103212",
         help="Reference camera directory (camera 1)"
     )
     parser.add_argument(
         "--cam2",
-        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/24400334",
+        default="/opt/dlami/nvme/datasets/droid_finished/Sat_Jun__3_00:23:48_2023/20655732",
         help="Camera to be aligned (camera 2)"
     )
     parser.add_argument(
         "--output-dir",
-        default="/opt/dlami/nvme/datasets/processed_droid/Fri_Aug_18_11:40:54_2023/24400334/extrinsics_refined",
+        default="/opt/dlami/nvme/datasets/droid_finished/Sat_Jun__3_00:23:48_2023/20655732/extrinsics_refined",
         help="Output directory for aligned extrinsics"
     )
     parser.add_argument(
         "--num-frames",
         type=int,
-        default=10,
+        default=1,
         help="Number of frames to use for alignment"
     )
     parser.add_argument(
@@ -970,13 +970,13 @@ def create_argument_parser():
     parser.add_argument(
         "--max-depth",
         type=float,
-        default=0.8,
+        default=2,
         help="Only use points with depth <= max_depth meters when building point clouds for ICP"
     )
     parser.add_argument(
         "--voxel-size",
         type=float,
-        default=0.001,
+        default=0.0001,
         help="Voxel size for downsampling (in meters)"
     )
     parser.add_argument(

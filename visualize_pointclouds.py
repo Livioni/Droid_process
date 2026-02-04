@@ -50,15 +50,15 @@ def load_camera_data(camera_dir, frame_idx):
     #     extrinsics_file = camera_dir / "extrinsics_refined" / f"mapanything.npy"
     #     extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
     #     print(f"Loaded MapAnything extrinsics from {extrinsics_file}")
-    if os.path.exists(camera_dir / "extrinsics_align" / f"{camera_id}.npy"):
-        extrinsics_file = camera_dir / "extrinsics_align" / f"{camera_id}.npy"
-        extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
-        print(f"Loaded refined extrinsics from {extrinsics_file}")
-    elif os.path.exists(camera_dir / "extrinsics_refined" / f"{camera_id}.npy"):
-        extrinsics_file = camera_dir / "extrinsics_refined" / f"{camera_id}.npy"
-        extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
-        print(f"Loaded extrinsics from {extrinsics_file}")
-    elif os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
+    # if os.path.exists(camera_dir / "extrinsics_align" / f"{camera_id}.npy"):
+    #     extrinsics_file = camera_dir / "extrinsics_align" / f"{camera_id}.npy"
+    #     extrinsics = np.load(extrinsics_file,allow_pickle=True)[frame_idx_clone]
+    #     print(f"Loaded refined extrinsics from {extrinsics_file}")
+    # elif os.path.exists(camera_dir / "extrinsics_refined" / f"{camera_id}.npy"):
+    #     extrinsics_file = camera_dir / "extrinsics_refined" / f"{camera_id}.npy"
+    #     extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
+    #     print(f"Loaded extrinsics from {extrinsics_file}")
+    if os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
         extrinsics_file = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
         extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
         print(f"Loaded extrinsics from {extrinsics_file}")
@@ -344,9 +344,9 @@ def main():
         "--cameras",
         nargs="+",
         default=[
-            "/opt/dlami/nvme/datasets/droid_finished/Fri_Jul_14_15:59:25_2023/18026681",
-            "/opt/dlami/nvme/datasets/droid_finished/Fri_Jul_14_15:59:25_2023/22008760",
-            "/opt/dlami/nvme/datasets/droid_finished/Fri_Jul_14_15:59:25_2023/24400334",
+            "/opt/dlami/nvme/datasets/droid_finished/Sat_Jun__3_00:23:48_2023/16787047",
+            "/opt/dlami/nvme/datasets/droid_finished/Sat_Jun__3_00:23:48_2023/20103212",
+            "/opt/dlami/nvme/datasets/droid_finished/Sat_Jun__3_00:23:48_2023/20655732",
         ],
         help="List of camera directories"
     )

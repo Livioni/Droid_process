@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Batch processing script for all scene directories in the datasets folder.
+Batch processing script for wrist camera depth processing in all scene directories.
 
 This script recursively finds all scene directories (e.g., Fri_Jul__7_09:45:39_2023)
-and processes them using process_camera_data.py with support for parallel processing.
+and processes only the wrist camera stereo depth using wrist_camera_stereo_depth_pytorch.py
+with support for parallel processing.
 
 Usage:
     python batch_process_scenes.py [--datasets_root datasets] [--output_dir /opt/dlami/nvme/datasets/processed_droid] [--num_workers 4]
@@ -159,19 +160,19 @@ def find_scene_directories(datasets_root):
     return sorted(scene_dirs)
 
 
-def process_scene(scene_dir, output_dir, log_file_path=None, delete_after_success=False, 
+def process_scene(scene_dir, output_dir, log_file_path=None, delete_after_success=False,
                  validate_before_process=False, datasets_root=None):
     """
-    Process a single scene directory using process_camera_data.py
-    
+    Process wrist camera stereo depth for a single scene directory using wrist_camera_stereo_depth_pytorch.py
+
     Args:
-        scene_dir: Path to the scene directory
-        output_dir: Base output directory
+        scene_dir: Path to the scene directory (used as dataset_root for wrist camera processing)
+        output_dir: Base output directory (legacy parameter, not used by wrist camera processing)
         log_file_path: Optional path to log file for logging
         delete_after_success: If True, delete the original directory after successful processing
         validate_before_process: If True, validate scene completeness before processing
         datasets_root: Root datasets directory for safety checks
-    
+
     Returns:
         Tuple of (success: bool, scene_dir: Path, message: str, deleted: bool)
     """
@@ -221,10 +222,10 @@ def process_scene(scene_dir, output_dir, log_file_path=None, delete_after_succes
             
             return (False, scene_dir, error_msg, True)  # deleted=True
     
-    # Build the command
+    # Build the command for wrist camera depth processing
     cmd = [
         "python",
-        "process_camera_data.py",
+        "process_wrist_camera_data.py",
         "--input_dir", str(scene_dir),
         "--output_dir", str(output_dir)
     ]
@@ -308,19 +309,19 @@ def process_scene_wrapper(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Batch process all scene directories in the datasets folder'
+        description='Batch process wrist camera stereo depth for all scene directories'
     )
     parser.add_argument(
         '--datasets_root',
         type=str,
-        default='/opt/dlami/nvme/datasets/droid_datasets',
-        help='Root directory containing all datasets (default: datasets)'
+        default='/fsx/home/lihao/datasets/droid_datasets/part1',
+        help='Root directory containing all scene datasets'
     )
     parser.add_argument(
         '--output_dir',
         type=str,
-        default='/opt/dlami/nvme/datasets/processed_droid',
-        help='Output directory for processed data (default: /opt/dlami/nvme/datasets/processed_droid)'
+        default='/fsx/home/lihao/datasets/droid_datasets/processed',
+        help='Legacy parameter (not used by wrist camera processing)'
     )
     parser.add_argument(
         '--log_file',
@@ -390,10 +391,8 @@ def main():
         scene_dirs = scene_dirs[:args.limit]
         print(f"Limited to {args.limit} scenes")
     
-    # Create output directory
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Output directory: {output_dir}")
+    # Note: Wrist camera processing outputs to scene directories internally
+    output_dir = Path(args.output_dir)  # Keep for compatibility but not used
     
     # Validate num_workers
     max_workers = multiprocessing.cpu_count()
@@ -415,15 +414,15 @@ def main():
         if args.delete_after_success:
             print("• Successfully processed scenes will be DELETED")
         print(f"\nDatasets root: {Path(args.datasets_root).resolve()}")
-        print(f"Output directory: {output_dir.resolve()}")
+        print("Output: Wrist camera depth data saved within scene directories")
         print("="*80 + "\n")
     
     # Initialize log file
     with open(args.log_file, 'a') as log_file:
         log_file.write(f"\n\n{'='*80}\n")
-        log_file.write(f"Batch processing started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        log_file.write(f"Wrist camera batch processing started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         log_file.write(f"Total scenes to process: {len(scene_dirs)}\n")
-        log_file.write(f"Output directory: {output_dir}\n")
+        log_file.write(f"Datasets root: {args.datasets_root}\n")
         log_file.write(f"Number of workers: {args.num_workers}\n")
         log_file.write(f"Validate scenes: {args.validate_scenes}\n")
         log_file.write(f"Delete after success: {args.delete_after_success}\n")
@@ -435,10 +434,17 @@ def main():
     
     for scene_dir in scene_dirs:
         if args.skip_existing:
-            scene_name = scene_dir.name
-            output_scene_dir = output_dir / scene_name
-            if output_scene_dir.exists():
-                skip_msg = f"Skipping (already exists): {scene_dir}"
+            # Check if wrist camera processing has already been done in this scene
+            # Look for wrist camera subfolder with depth_npy directory
+            wrist_processed = False
+            for subdir in scene_dir.iterdir():
+                if subdir.is_dir() and (subdir / 'wrist_camera.txt').exists():
+                    if (subdir / 'depth_npy').exists():
+                        wrist_processed = True
+                        break
+
+            if wrist_processed:
+                skip_msg = f"Skipping (wrist camera already processed): {scene_dir}"
                 print(skip_msg)
                 with open(args.log_file, 'a') as log_file:
                     log_file.write(f"{skip_msg}\n")
