@@ -354,8 +354,6 @@ def main() -> None:
     if not ref_img_path.exists() or not ref_depth_path.exists() or not ref_K_path.exists():
         raise FileNotFoundError(f"Missing required files for reference frame {ref_frame}")
 
-    ref_img = _load_rgb_uint8(ref_img_path)
-    ref_depth = _load_depth_meters(ref_depth_path)
     ref_K = _load_intrinsics(ref_K_path)
 
     # Initialize poses array

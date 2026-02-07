@@ -63,7 +63,7 @@ def load_camera_data(camera_dir, frame_idx):
         extrinsics_file = camera_dir / "extrinsics_refined" / f"{camera_id}.npy"
         extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
         print(f"Loaded extrinsics from {extrinsics_file}")
-    if os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
+    elif os.path.exists(camera_dir / "extrinsics" / f"{camera_id}_left.npy"):
         extrinsics_file = camera_dir / "extrinsics" / f"{camera_id}_left.npy"
         extrinsics = np.load(str(extrinsics_file))[frame_idx_clone]
         print(f"Loaded extrinsics from {extrinsics_file}")
